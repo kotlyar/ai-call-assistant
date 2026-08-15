@@ -19,6 +19,7 @@ trap cleanup_staging EXIT
 mkdir -p "$staged_app/Contents/MacOS" "$staged_app/Contents/Resources"
 cp "$bin_dir/AICallAssistant" "$staged_app/Contents/MacOS/AICallAssistant"
 cp "$project_dir/Info.plist" "$staged_app/Contents/Info.plist"
+cp "$project_dir/Resources/AppIcon.icns" "$staged_app/Contents/Resources/AppIcon.icns"
 xattr -cr "$staged_app"
 codesign --force --deep --sign - "$staged_app"
 codesign --verify --deep --strict "$staged_app"
