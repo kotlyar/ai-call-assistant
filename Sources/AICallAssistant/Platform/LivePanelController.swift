@@ -48,8 +48,10 @@ final class LivePanelController: NSObject, NSWindowDelegate {
             windowToHide?.orderOut(nil)
         }
 
-        let content = LivePanelMaterialContainer(content: rootView)
+        let content = LivePanelClearContainer(content: rootView)
         let hostingController = NSHostingController(rootView: content)
+        hostingController.view.wantsLayer = true
+        hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
         let panel = makePanel(preferredSize: preferredSize)
         panel.delegate = self
         panel.contentViewController = hostingController
@@ -162,15 +164,11 @@ private final class LiveSidecarPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-private struct LivePanelMaterialContainer<Content: View>: View {
+private struct LivePanelClearContainer<Content: View>: View {
     let content: Content
 
     var body: some View {
-        ZStack {
-            HUDVisualEffectView()
-                .ignoresSafeArea()
-            content
-        }
+        content
         .environment(\.colorScheme, .dark)
     }
 }

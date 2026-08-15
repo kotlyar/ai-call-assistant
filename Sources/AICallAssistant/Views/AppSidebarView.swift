@@ -135,7 +135,8 @@ struct AppSidebarView: View {
             .font(.subheadline)
             .foregroundStyle(screen == destination ? Color.primary : AssistantTheme.secondaryText)
             .padding(.horizontal, 10)
-            .frame(height: 38)
+            .frame(maxWidth: .infinity, minHeight: 38)
+            .contentShape(Rectangle())
             .background(
                 screen == destination
                     ? AssistantTheme.surface
@@ -150,6 +151,8 @@ struct AppSidebarView: View {
             }
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .onHover { isHovered in
             if isHovered {
                 hoveredScreen = destination

@@ -11,11 +11,8 @@ struct LiveAssistantView: View {
 
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea()
-
-            Color.black.opacity(0.56)
+            // Dark scrim stays transparent and deliberately avoids a blur material.
+            Color.black.opacity(0.76)
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {

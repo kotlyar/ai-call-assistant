@@ -21,16 +21,21 @@ struct SetupView: View {
     ]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                audioSection
-                contextSection
-                footer
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                    audioSection
+                    contextSection
+                }
+                .frame(maxWidth: AssistantTheme.contentWidth, alignment: .leading)
+                .padding(.horizontal, 26)
+                .padding(.top, 26)
+                .padding(.bottom, 22)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: AssistantTheme.contentWidth, alignment: .leading)
-            .padding(26)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            footer
         }
         .background(AssistantTheme.windowBackground)
         .navigationTitle("Новый звонок")
@@ -119,28 +124,31 @@ struct SetupView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 16) {
-            Text(selectionDescription)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            Button(action: onStartCall) {
-                Label("Начать", systemImage: "phone.fill")
-                    .padding(.horizontal, 5)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .keyboardShortcut(.defaultAction)
-            .accessibilityHint("Начинает анализ разговора и открывает окно суфлёра")
-        }
-        .padding(.top, 18)
-        .padding(.bottom, 4)
-        .overlay(alignment: .top) {
+        VStack(spacing: 0) {
             Divider()
+
+            HStack(spacing: 16) {
+                Text(selectionDescription)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button(action: onStartCall) {
+                    Label("Начать", systemImage: "phone.fill")
+                        .padding(.horizontal, 8)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityHint("Начинает анализ разговора и открывает окно суфлёра")
+            }
+            .frame(maxWidth: AssistantTheme.contentWidth)
+            .padding(.horizontal, 26)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
         }
-        .padding(.top, 18)
+        .background(AssistantTheme.surface)
     }
 
     private var selectedContextCount: Int {
