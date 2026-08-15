@@ -9,9 +9,9 @@ enum RecordingAudioExport: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .combined: "Общий файл"
-        case .incoming: "Входящий звук"
-        case .outgoing: "Исходящий звук"
+        case .combined: "Общую запись"
+        case .incoming: "Звук собеседника"
+        case .outgoing: "Мой микрофон"
         }
     }
 
@@ -37,48 +37,61 @@ enum RecordingAudioExport: String, CaseIterable, Identifiable {
 }
 
 struct RecordingAudioRow: View {
-    let durationText: String
+    let duration: TimeInterval
     let isPlaying: Bool
     let onTogglePlayback: () -> Void
     let onDownload: (RecordingAudioExport) -> Void
 
+    @State private var isHovering = false
+
     var body: some View {
-        HStack(spacing: 13) {
+        HStack(spacing: 11) {
             Button(action: onTogglePlayback) {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 36, height: 36)
-                    .background(AssistantTheme.accent, in: Circle())
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isPlaying ? Color.white : AssistantTheme.accent)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        isPlaying ? AssistantTheme.accent : AssistantTheme.accentSoft,
+                        in: Circle()
+                    )
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isPlaying ? "Приостановить запись" : "Воспроизвести запись")
 
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Text("Аудиозапись звонка")
-                        .font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AssistantTheme.accent)
+                        .accessibilityHidden(true)
+
+                    Text("Общий звук")
+                        .font(.caption.weight(.medium))
 
                     Spacer()
 
-                    Text(durationText)
-                        .font(.caption.monospacedDigit())
+                    Text(isPlaying ? "\(elapsedText) / \(durationText)" : durationText)
+                        .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
 
-                WaveformView(progress: isPlaying ? 0.32 : 0)
-                    .frame(height: 24)
+                WaveformView(progress: playbackProgress)
+                    .frame(height: 20)
             }
 
+            Divider()
+                .frame(height: 28)
+
             Menu {
-                Section("Скачать аудио") {
+                Section("Скачать") {
                     ForEach(RecordingAudioExport.allCases) { export in
                         Button {
                             onDownload(export)
                         } label: {
                             Label {
-                                Text("\(export.title) — \(export.filename)")
+                                Text(export.title)
                             } icon: {
                                 Image(systemName: export.systemImage)
                             }
@@ -87,18 +100,41 @@ struct RecordingAudioRow: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 30, height: 30)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .accessibilityLabel("Меню аудиозаписи")
-            .help("Скачать аудиозапись")
+            .help("Скачать общую запись или отдельную дорожку")
         }
-        .padding(14)
-        .assistantCard()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            isHovering ? AssistantTheme.hoverSurface : AssistantTheme.subtleSurface,
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(AssistantTheme.separator.opacity(isHovering ? 0.85 : 0.45))
+        }
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.14), value: isHovering)
+    }
+
+    private var playbackProgress: Double {
+        isPlaying ? 0.32 : 0
+    }
+
+    private var elapsedText: String {
+        RecordingListRow.durationText(duration * playbackProgress)
+    }
+
+    private var durationText: String {
+        RecordingListRow.durationText(duration)
     }
 }
 

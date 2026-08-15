@@ -109,7 +109,7 @@ struct RecordingsView: View {
                     }
 
                     RecordingAudioRow(
-                        durationText: RecordingListRow.durationText(recording.duration),
+                        duration: recording.duration,
                         isPlaying: playingRecordingID == recording.id,
                         onTogglePlayback: { onTogglePlayback(recording) },
                         onDownload: { onDownload(recording, $0) }
