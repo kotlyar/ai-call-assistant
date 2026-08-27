@@ -1,14 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// Owns the always-on-top assistant panel shown while a call is in progress.
+/// Owns the always-on-top assistant workspace shown while a call is in progress.
 ///
 /// The controller accepts any SwiftUI root view. The caller can invoke `finish()`
 /// from that view's end-call action; `onFinish` is then called after the normal
 /// application window has been restored.
 @MainActor
 final class LivePanelController: NSObject, NSWindowDelegate {
-    nonisolated static let defaultSize = CGSize(width: 430, height: 720)
+    nonisolated static let defaultSize = CGSize(width: 1080, height: 720)
+    nonisolated static let minimumSize = CGSize(width: 720, height: 680)
 
     private var panel: LiveSidecarPanel?
     private weak var hiddenMainWindow: NSWindow?
@@ -94,10 +95,16 @@ final class LivePanelController: NSObject, NSWindowDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
+        // Best-effort for legacy capture paths. Modern ScreenCaptureKit-based
+        // full-display sharing may still include the panel.
+        panel.sharingType = .none
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.animationBehavior = .utilityWindow
-        panel.minSize = NSSize(width: 360, height: 460)
+        panel.minSize = NSSize(
+            width: LivePanelController.minimumSize.width,
+            height: LivePanelController.minimumSize.height
+        )
 
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
@@ -113,12 +120,19 @@ final class LivePanelController: NSObject, NSWindowDelegate {
             return
         }
 
-        let margin: CGFloat = 20
-        let width = min(panel.frame.width, max(360, visibleFrame.width - margin * 2))
-        let height = min(panel.frame.height, max(460, visibleFrame.height - margin * 2))
+        // The workspace is large enough that a screen corner reads as cramped.
+        // Centre it horizontally and bias it upward, clamping to the screen so
+        // the panel still fits on a small display.
+        let margin: CGFloat = 24
+        let available = visibleFrame.insetBy(dx: margin, dy: margin)
+        let width = min(panel.frame.width, max(LivePanelController.minimumSize.width, available.width))
+        let height = min(panel.frame.height, max(LivePanelController.minimumSize.height, available.height))
         let origin = NSPoint(
-            x: visibleFrame.maxX - width - margin,
-            y: visibleFrame.maxY - height - margin
+            x: max(visibleFrame.minX + margin, visibleFrame.midX - width / 2),
+            y: min(
+                visibleFrame.maxY - height - margin,
+                visibleFrame.midY - height / 2 + visibleFrame.height * 0.06
+            )
         )
         panel.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
     }

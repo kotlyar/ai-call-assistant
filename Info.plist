@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>ru</string>
     <key>CFBundleDisplayName</key>
-    <string>AI Call Assistant</string>
+    <string>Callya</string>
     <key>CFBundleExecutable</key>
     <string>AICallAssistant</string>
     <key>CFBundleIdentifier</key>
@@ -15,19 +15,23 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>AI Call Assistant</string>
+    <string>Callya</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.2.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>AI Call Assistant использует микрофон для записи вашего голоса во время звонка.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Callya показывает уровень микрофона перед звонком и записывает ваш голос после начала звонка.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Callya показывает уровень выбранного приложения или системного звука перед звонком и записывает голос собеседника после начала звонка.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Callya проверяет уровень выбранного системного звука перед звонком и записывает его только после начала звонка.</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
 </dict>

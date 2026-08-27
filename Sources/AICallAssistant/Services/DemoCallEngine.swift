@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 
+@MainActor
 final class DemoCallEngine: ObservableObject, CallEngine {
     static let defaultScript: [AssistantMoment] = [
         AssistantMoment(
@@ -36,8 +37,10 @@ final class DemoCallEngine: ObservableObject, CallEngine {
 
     private var currentIndex = 0
     private var startedAt: Date?
-    private var elapsedTimer: Timer?
-    private var momentTimer: Timer?
+    // Deinitializers are nonisolated. Both timers are otherwise confined to
+    // the main run loop, and cannot race once `self` has begun deinitializing.
+    nonisolated(unsafe) private var elapsedTimer: Timer?
+    nonisolated(unsafe) private var momentTimer: Timer?
 
     init(
         moments: [AssistantMoment]? = nil,

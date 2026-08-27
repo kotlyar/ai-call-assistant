@@ -6,6 +6,7 @@ enum CallEngineState: String, Codable, Equatable {
     case stopped
 }
 
+@MainActor
 protocol CallEngine: AnyObject {
     var state: CallEngineState { get }
     var elapsedTime: TimeInterval { get }

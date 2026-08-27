@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "AI Call Assistant",
+    name: "Callya",
     platforms: [
         .macOS(.v13)
     ],

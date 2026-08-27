@@ -3,5 +3,10 @@
 .swiftpm/
 dist/
 DerivedData/
+.env.local
+.playwright-cli/
+/REALTIME_IMPLEMENTATION_PLAN.md
+artifacts/
+reports/
 *.xcuserstate
 xcuserdata/

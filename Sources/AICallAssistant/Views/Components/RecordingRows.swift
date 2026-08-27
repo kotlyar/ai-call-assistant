@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum RecordingAudioExport: String, CaseIterable, Identifiable {
+enum RecordingAudioExport: String, CaseIterable, Hashable, Identifiable {
     case combined
     case incoming
     case outgoing
@@ -16,7 +16,7 @@ enum RecordingAudioExport: String, CaseIterable, Identifiable {
     }
 
     var filename: String {
-        "\(rawValue).mp4"
+        "\(rawValue).m4a"
     }
 
     var detail: String {
@@ -39,10 +39,16 @@ enum RecordingAudioExport: String, CaseIterable, Identifiable {
 struct RecordingAudioRow: View {
     let duration: TimeInterval
     let isPlaying: Bool
+    let elapsedTime: TimeInterval
+    let playbackDuration: TimeInterval
+    let playbackProgress: Double
+    let availableExports: Set<RecordingAudioExport>
     let onTogglePlayback: () -> Void
+    let onSeek: (Double) -> Void
     let onDownload: (RecordingAudioExport) -> Void
 
     @State private var isHovering = false
+    @State private var scrubProgress: Double?
 
     var body: some View {
         HStack(spacing: 11) {
@@ -58,6 +64,7 @@ struct RecordingAudioRow: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .disabled(availableExports.isEmpty)
             .accessibilityLabel(isPlaying ? "Приостановить запись" : "Воспроизвести запись")
 
             VStack(alignment: .leading, spacing: 6) {
@@ -67,18 +74,35 @@ struct RecordingAudioRow: View {
                         .foregroundStyle(AssistantTheme.accent)
                         .accessibilityHidden(true)
 
-                    Text("Общий звук")
+                    Text(primaryAudioTitle)
                         .font(.caption.weight(.medium))
 
                     Spacer()
 
-                    Text(isPlaying ? "\(elapsedText) / \(durationText)" : durationText)
+                    Text(showsElapsedTime ? "\(elapsedText) / \(durationText)" : durationText)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
 
-                WaveformView(progress: playbackProgress)
-                    .frame(height: 20)
+                GeometryReader { proxy in
+                    WaveformView(progress: displayedProgress)
+                        .contentShape(Rectangle())
+                        .gesture(seekGesture(width: proxy.size.width))
+                }
+                .frame(height: 20)
+                .allowsHitTesting(isPlaying)
+                .help(isPlaying
+                    ? "Нажмите или перетащите, чтобы перемотать"
+                    : "Запустите воспроизведение, чтобы перемотать"
+                )
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Позиция воспроизведения")
+                .accessibilityValue("\(elapsedText) из \(durationText)")
+                .accessibilityHint(isPlaying
+                    ? "Изменяет позицию в аудиозаписи"
+                    : "Сначала запустите воспроизведение"
+                )
+                .accessibilityAdjustableAction(adjustPlaybackPosition)
             }
 
             Divider()
@@ -86,7 +110,7 @@ struct RecordingAudioRow: View {
 
             Menu {
                 Section("Скачать") {
-                    ForEach(RecordingAudioExport.allCases) { export in
+                    ForEach(RecordingAudioExport.allCases.filter { availableExports.contains($0) }) { export in
                         Button {
                             onDownload(export)
                         } label: {
@@ -108,38 +132,113 @@ struct RecordingAudioRow: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .disabled(availableExports.isEmpty)
             .accessibilityLabel("Меню аудиозаписи")
             .help("Скачать общую запись или отдельную дорожку")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 9)
         .background(
             isHovering ? AssistantTheme.hoverSurface : AssistantTheme.subtleSurface,
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(AssistantTheme.separator.opacity(isHovering ? 0.85 : 0.45))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(AssistantTheme.contentHairline)
         }
         .onHover { isHovering = $0 }
+        .onChange(of: isPlaying) { isPlaying in
+            if !isPlaying {
+                scrubProgress = nil
+            }
+        }
         .animation(.easeOut(duration: 0.14), value: isHovering)
     }
 
-    private var playbackProgress: Double {
-        isPlaying ? 0.32 : 0
+    private var elapsedText: String {
+        RecordingListRow.durationText(displayedElapsedTime)
     }
 
-    private var elapsedText: String {
-        RecordingListRow.durationText(duration * playbackProgress)
+    private var displayedElapsedTime: TimeInterval {
+        if let scrubProgress {
+            return resolvedDuration * scrubProgress
+        }
+        return elapsedTime
+    }
+
+    private var displayedProgress: Double {
+        scrubProgress ?? min(max(playbackProgress, 0), 1)
+    }
+
+    private var showsElapsedTime: Bool {
+        isPlaying || scrubProgress != nil
+    }
+
+    private func seekGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard isPlaying, width > 0 else { return }
+                let progress = seekProgress(at: value.location.x, width: width)
+                scrubProgress = progress
+                onSeek(progress)
+            }
+            .onEnded { value in
+                guard isPlaying, width > 0 else {
+                    scrubProgress = nil
+                    return
+                }
+                let progress = seekProgress(at: value.location.x, width: width)
+                onSeek(progress)
+                scrubProgress = nil
+            }
+    }
+
+    private func adjustPlaybackPosition(_ direction: AccessibilityAdjustmentDirection) {
+        guard isPlaying, resolvedDuration > 0 else { return }
+
+        let step = min(5 / resolvedDuration, 1)
+        let target: Double
+        switch direction {
+        case .increment:
+            target = displayedProgress + step
+        case .decrement:
+            target = displayedProgress - step
+        @unknown default:
+            return
+        }
+        onSeek(min(max(target, 0), 1))
+    }
+
+    private func seekProgress(at xPosition: CGFloat, width: CGFloat) -> Double {
+        min(max(Double(xPosition / width), 0), 1)
+    }
+
+    private var primaryAudioTitle: String {
+        if availableExports.contains(.combined) {
+            return "Общий звук"
+        }
+        if availableExports.contains(.incoming) {
+            return "Звук собеседника"
+        }
+        if availableExports.contains(.outgoing) {
+            return "Ваш микрофон"
+        }
+        return "Аудиофайл не найден"
     }
 
     private var durationText: String {
-        RecordingListRow.durationText(duration)
+        RecordingListRow.durationText(resolvedDuration)
+    }
+
+    private var resolvedDuration: TimeInterval {
+        playbackDuration > 0 ? playbackDuration : duration
     }
 }
 
 struct TranscriptFileRow: View {
     let participantCount: Int
+    let status: RecordingArtifactStatus
+    let onRetry: (() -> Void)?
     let onOpen: () -> Void
     let onRevealInFinder: () -> Void
 
@@ -148,8 +247,8 @@ struct TranscriptFileRow: View {
             Image(systemName: "doc.text")
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(AssistantTheme.accent)
-                .frame(width: 38, height: 38)
-                .background(AssistantTheme.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(width: 34, height: 34)
+                .background(AssistantTheme.accentSoft)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -157,26 +256,22 @@ struct TranscriptFileRow: View {
                     Text("transcript.txt")
                         .font(.subheadline.weight(.semibold))
 
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(AssistantTheme.green)
-                            .frame(width: 6, height: 6)
-                            .accessibilityHidden(true)
-
-                        Text("Готов")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Статус: готов")
+                    RecordingProcessingBadge(label: status.label)
                 }
 
-                Text("\(participantText) · таймкоды")
+                Text("\(participantText) · таймкоды · \(status.detail)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
+
+            if let onRetry {
+                Button("Повторить", action: onRetry)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityHint("Повторно запускает обработку сохранённой аудиозаписи")
+            }
 
             Menu {
                 Button(action: onOpen) {
@@ -198,8 +293,9 @@ struct TranscriptFileRow: View {
             .accessibilityLabel("Действия с файлом transcript.txt")
             .help("Действия с транскрипцией")
         }
-        .padding(14)
-        .assistantCard()
+        .padding(12)
+        .background(AssistantTheme.surface)
+        .overlay { Rectangle().stroke(AssistantTheme.contentHairline) }
     }
 
     private var participantText: String {
@@ -211,42 +307,203 @@ struct TranscriptFileRow: View {
     }
 }
 
+struct RecordingProcessingBadge: View {
+    let label: RecordingProcessingLabel
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .font(.system(size: 9, weight: .semibold))
+                .accessibilityHidden(true)
+
+            Text(label.title)
+                .font(.caption2.weight(.medium))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(color.opacity(0.11), in: Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Статус: \(label.title)")
+    }
+
+    private var color: Color {
+        switch label {
+        case .processing: .orange
+        case .ready: AssistantTheme.green
+        case .failed: .red
+        }
+    }
+
+    private var systemImage: String {
+        switch label {
+        case .processing: "clock.arrow.circlepath"
+        case .ready: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+struct FinalAnalysisStatusRow: View {
+    let status: RecordingArtifactStatus
+    let onRetry: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(AssistantTheme.accent)
+                .frame(width: 32, height: 32)
+                .background(AssistantTheme.accentSoft)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                RecordingProcessingBadge(label: status.label)
+                Text(status.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if let onRetry {
+                Button("Повторить", action: onRetry)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .accessibilityHint("Повторно запускает итоговый анализ")
+            }
+        }
+        .padding(12)
+        .background(AssistantTheme.surface)
+        .overlay { Rectangle().stroke(AssistantTheme.contentHairline) }
+    }
+}
+
+struct FinalQuestionAnswerCardView: View {
+    let card: FinalQuestionAnswerCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            labeledText("ВОПРОС", text: card.normalizedQuestion)
+            labeledText("ОТВЕТ", text: card.answer)
+
+            if !card.advice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(AssistantTheme.accent)
+                        .padding(.top, 2)
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Совет")
+                            .font(.caption.weight(.semibold))
+                        Text(card.advice)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AssistantTheme.subtleSurface)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(AssistantTheme.accent)
+                        .frame(width: 2)
+                }
+            }
+
+            if let quote = card.evidence.first?.exactQuote,
+               !quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Label {
+                    Text("«\(quote)»")
+                        .lineLimit(3)
+                } icon: {
+                    Image(systemName: "quote.opening")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Фрагмент транскрибации: \(quote)")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AssistantTheme.surface)
+        .overlay { Rectangle().stroke(AssistantTheme.contentHairline) }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func labeledText(_ label: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .tracking(0.5)
+                .foregroundStyle(AssistantTheme.accent)
+            Text(text)
+                .font(.subheadline.weight(label == "ВОПРОС" ? .semibold : .regular))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+    }
+}
+
 struct RecordingListRow: View {
     let recording: Recording
     let isSelected: Bool
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(recording.title)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(2)
+    @State private var isHovering = false
 
-            HStack(spacing: 5) {
-                Text(recording.startedAt, format: .dateTime.day().month(.abbreviated))
-                Text("·")
-                Text(Self.durationText(recording.duration))
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isSelected ? "waveform.circle.fill" : "waveform.circle")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(isSelected ? AssistantTheme.accent : RecordingsChrome.sidebarSecondary)
+                .frame(width: 19)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(recording.title)
+                    .font(.subheadline.weight(isSelected ? .semibold : .medium))
+                    .foregroundStyle(RecordingsChrome.sidebarPrimary)
+                    .lineLimit(2)
+
+                HStack(spacing: 5) {
+                    Text(recording.startedAt, format: .dateTime.day().month(.abbreviated))
+                    Text("·")
+                    Text(Self.durationText(recording.duration))
+
+                    Spacer(minLength: 4)
+
+                    RecordingProcessingBadge(
+                        label: RecordingPostCallPresentation.make(for: recording).overallLabel
+                    )
+                }
+                .font(.caption)
+                .foregroundStyle(RecordingsChrome.sidebarSecondary)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            isSelected ? AssistantTheme.accentSoft : Color.clear,
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
+        .background(rowBackground)
         .overlay(alignment: .leading) {
             if isSelected {
-                Capsule()
+                Rectangle()
                     .fill(AssistantTheme.accent)
                     .frame(width: 3)
-                    .padding(.vertical, 7)
             }
         }
         .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var rowBackground: Color {
+        if isSelected { return RecordingsChrome.sidebarSelection }
+        return isHovering ? RecordingsChrome.sidebarHover : .clear
     }
 
     static func durationText(_ duration: TimeInterval) -> String {
