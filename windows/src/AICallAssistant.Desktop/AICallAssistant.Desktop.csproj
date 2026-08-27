@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22000.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
+    <RootNamespace>AICallAssistant.Desktop</RootNamespace>
+    <AssemblyName>Callya</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="System.IO" />
+    <ProjectReference Include="../AICallAssistant.Core/AICallAssistant.Core.csproj" />
+    <PackageReference Include="NAudio" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
+    <None Include="../../THIRD_PARTY_NOTICES.md"
+          Link="THIRD_PARTY_NOTICES.md"
+          CopyToPublishDirectory="PreserveNewest" />
+    <None Include="../../licenses/dotnet/LICENSE.txt"
+          Link="licenses/dotnet/LICENSE.txt"
+          CopyToPublishDirectory="PreserveNewest" />
+    <None Include="../../licenses/dotnet/ThirdPartyNotices.txt"
+          Link="licenses/dotnet/ThirdPartyNotices.txt"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

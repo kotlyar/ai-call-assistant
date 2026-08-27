@@ -1,0 +1,151 @@
+<UserControl x:Class="AICallAssistant.Desktop.Views.SetupView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:AICallAssistant.Core.Models;assembly=AICallAssistant.Core">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="32,28">
+            <StackPanel MaxWidth="720" HorizontalAlignment="Center">
+                <TextBlock Text="Новый звонок" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock Text="Выберите источники звука и контекст — ассистент подключится в реальном времени."
+                           Style="{StaticResource SecondaryTextStyle}"
+                           Margin="0,6,0,22" />
+
+                <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                    <StackPanel>
+                        <TextBlock Text="АУДИО" Style="{StaticResource SectionTitleStyle}" Margin="16,13,16,11" />
+                        <Border Height="1" Background="{StaticResource BorderBrush}" />
+
+                        <Grid Margin="16,15">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="44" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="270" />
+                            </Grid.ColumnDefinitions>
+                            <Border Width="34" Height="34" CornerRadius="9" Background="{StaticResource AccentSoftBrush}">
+                                <TextBlock Text="&#xE720;" FontFamily="Segoe Fluent Icons" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Микрофон" FontWeight="SemiBold" />
+                                <TextBlock Text="Ваш голос" Style="{StaticResource SecondaryTextStyle}" FontSize="11" />
+                            </StackPanel>
+                            <ComboBox Grid.Column="2"
+                                      ItemsSource="{Binding Microphones}"
+                                      SelectedItem="{Binding SelectedMicrophone}"
+                                      DisplayMemberPath="Title" />
+                        </Grid>
+
+                        <Border Height="1" Background="{StaticResource BorderBrush}" Margin="60,0,0,0" />
+
+                        <Grid Margin="16,15">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="44" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="270" />
+                            </Grid.ColumnDefinitions>
+                            <Border Width="34" Height="34" CornerRadius="9" Background="{StaticResource AccentSoftBrush}">
+                                <TextBlock Text="&#xE995;" FontFamily="Segoe Fluent Icons" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Системный звук" FontWeight="SemiBold" />
+                                <TextBlock Text="Голос собеседника" Style="{StaticResource SecondaryTextStyle}" FontSize="11" />
+                            </StackPanel>
+                            <ComboBox Grid.Column="2"
+                                      ItemsSource="{Binding IncomingSources}"
+                                      SelectedItem="{Binding SelectedIncomingSource}"
+                                      DisplayMemberPath="Title" />
+                        </Grid>
+
+                        <Border Background="{StaticResource RaisedSurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="14,10">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right"
+                                        Content="Обновить"
+                                        Command="{Binding RefreshSourcesCommand}"
+                                        Style="{StaticResource TextButtonStyle}" />
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Ellipse Width="7" Height="7" Fill="{StaticResource SuccessBrush}" Margin="0,0,8,0" />
+                                    <TextBlock Text="{Binding AudioStatusText}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <Border Background="#2B1A20"
+                                Padding="14,10"
+                                Visibility="{Binding HasAudioError, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="{Binding AudioErrorText}" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap" FontSize="12" />
+                        </Border>
+
+                        <Border Height="1" Background="{StaticResource BorderBrush}" />
+                        <Grid Margin="16,11">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="INTERVIEW PACK" Style="{StaticResource SectionTitleStyle}" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Content="Выбрать все" Command="{Binding SelectAllContextsCommand}" Style="{StaticResource TextButtonStyle}" />
+                                <Button Content="Снять" Command="{Binding ClearContextSelectionCommand}" Style="{StaticResource TextButtonStyle}" />
+                                <Button Content="＋ Добавить" Command="{Binding BeginCreateContextCommand}" Style="{StaticResource TextButtonStyle}" />
+                            </StackPanel>
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource BorderBrush}" />
+
+                        <ListBox ItemsSource="{Binding Contexts}" MaxHeight="220" Margin="8">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="7,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="28" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Summary}" Style="{StaticResource SecondaryTextStyle}" FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="470" />
+                                        </StackPanel>
+                                        <Button Grid.Column="2"
+                                                Content="Изменить"
+                                                Style="{StaticResource TextButtonStyle}"
+                                                Command="{Binding DataContext.BeginEditContextCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                CommandParameter="{Binding}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <Border Height="1" Background="{StaticResource BorderBrush}" />
+                        <Grid Background="{StaticResource RaisedSurfaceBrush}" Margin="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="16,14">
+                                <TextBlock Text="{Binding SelectedContextText}" FontWeight="SemiBold" />
+                                <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                    <Ellipse Width="7" Height="7" Fill="{StaticResource SuccessBrush}" Margin="0,0,7,0" />
+                                    <TextBlock Text="{Binding CredentialStatusText}" Style="{StaticResource SecondaryTextStyle}" FontSize="11" />
+                                    <Button Content="Настроить OpenAI"
+                                            Command="{Binding NavigateCommand}"
+                                            CommandParameter="{x:Static models:AppSection.Settings}"
+                                            Style="{StaticResource TextButtonStyle}"
+                                            Margin="8,-6,0,-6" />
+                                </StackPanel>
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Content="Начать звонок"
+                                    Command="{Binding StartCallCommand}"
+                                    Style="{StaticResource PrimaryButtonStyle}"
+                                    Padding="22,10"
+                                    Margin="0,12,16,12" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="При выборе браузера в запись могут попасть другие вкладки этого приложения."
+                           Style="{StaticResource SecondaryTextStyle}"
+                           FontSize="11"
+                           Margin="3,12,0,0" />
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

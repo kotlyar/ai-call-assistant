@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/AICallAssistant.Core/AICallAssistant.Core.csproj" />
+  <Project Path="src/AICallAssistant.Desktop/AICallAssistant.Desktop.csproj" />
+  <Project Path="tests/AICallAssistant.Core.Tests/AICallAssistant.Core.Tests.csproj" />
+</Solution>

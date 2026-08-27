@@ -1,0 +1,206 @@
+<UserControl x:Class="AICallAssistant.Desktop.Views.ContextsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="1" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="28,22,28,18">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="240" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Контексты" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock Text="{Binding ContextCountText}" Style="{StaticResource SecondaryTextStyle}" Margin="10,8,0,0" />
+            </StackPanel>
+            <TextBox Grid.Column="1"
+                     Text="{Binding ContextSearchText, UpdateSourceTrigger=PropertyChanged}"
+                     ToolTip="Поиск по названию, тексту и файлам"
+                     Margin="0,0,10,0">
+                <TextBox.Style>
+                    <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+                        <Setter Property="Tag" Value="Поиск контекстов" />
+                    </Style>
+                </TextBox.Style>
+            </TextBox>
+            <Button Grid.Column="2"
+                    Content="＋ Добавить"
+                    Command="{Binding BeginCreateContextCommand}"
+                    Style="{StaticResource PrimaryButtonStyle}" />
+        </Grid>
+
+        <Border Grid.Row="1" Background="{StaticResource BorderBrush}" />
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding FilteredContexts}" Margin="22,20">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel IsItemsHost="True" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Width="310"
+                                MinHeight="150"
+                                Margin="6"
+                                Style="{StaticResource CardBorderStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,1,9,0" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" />
+                                    <Button Grid.Column="2"
+                                            Content="&#xE70F;"
+                                            FontFamily="Segoe Fluent Icons"
+                                            Style="{StaticResource TextButtonStyle}"
+                                            Command="{Binding DataContext.BeginEditContextCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}"
+                                            ToolTip="Редактировать" />
+                                </Grid>
+
+                                <TextBlock Grid.Row="1"
+                                           Text="{Binding Summary}"
+                                           Style="{StaticResource SecondaryTextStyle}"
+                                           TextWrapping="Wrap"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxHeight="58"
+                                           Margin="0,12,0,10" />
+
+                                <Grid Grid.Row="2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="&#xE723;" FontFamily="Segoe Fluent Icons" Foreground="{StaticResource AccentBrush}" Margin="0,0,6,0" />
+                                        <TextBlock Text="{Binding AttachmentText}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1"
+                                            Content="Удалить"
+                                            Style="{StaticResource TextButtonStyle}"
+                                            Foreground="{StaticResource DangerBrush}"
+                                            Tag="{Binding}"
+                                            Click="DeleteContext_Click" />
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <Grid Grid.RowSpan="3"
+              Panel.ZIndex="10"
+              Background="#D90A0E15"
+              Visibility="{Binding IsContextEditorOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <Border Width="620"
+                    MaxHeight="680"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Center"
+                    Style="{StaticResource CardBorderStyle}"
+                    Padding="24">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="{Binding ContextEditorTitle}" Style="{StaticResource PageTitleStyle}" FontSize="22" />
+                        <TextBlock Text="Добавьте факты и материалы, которые ассистент должен учитывать во время звонка."
+                                   Style="{StaticResource SecondaryTextStyle}"
+                                   Margin="0,6,0,18" />
+                    </StackPanel>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="0,0,8,0">
+                            <TextBlock Text="Название" FontWeight="SemiBold" Margin="0,0,0,7" />
+                            <TextBox Text="{Binding ContextTitleDraft, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="0,0,0,16" />
+
+                            <TextBlock Text="Содержимое" FontWeight="SemiBold" Margin="0,0,0,7" />
+                            <TextBox Text="{Binding ContextBodyDraft, UpdateSourceTrigger=PropertyChanged}"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalContentAlignment="Top"
+                                     MinHeight="145"
+                                     Margin="0,0,0,16" />
+
+                            <Grid Margin="0,0,0,9">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Файлы" FontWeight="SemiBold" />
+                                    <TextBlock Text="PDF, документы, презентации, таблицы и текст · до 50 МБ"
+                                               Style="{StaticResource SecondaryTextStyle}"
+                                               FontSize="11" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Добавить файлы" Click="AddFiles_Click" />
+                            </Grid>
+
+                            <ItemsControl ItemsSource="{Binding ContextAttachmentsDraft}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource RaisedSurfaceBrush}"
+                                                BorderBrush="{StaticResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="8"
+                                                Padding="10"
+                                                Margin="0,0,0,7">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="26" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="&#xE8A5;" FontFamily="Segoe Fluent Icons" Foreground="{StaticResource AccentBrush}" />
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="Текст извлечён" Style="{StaticResource SecondaryTextStyle}" FontSize="11" />
+                                                </StackPanel>
+                                                <Button Grid.Column="2"
+                                                        Content="&#xE711;"
+                                                        FontFamily="Segoe Fluent Icons"
+                                                        Style="{StaticResource TextButtonStyle}"
+                                                        Command="{Binding DataContext.RemoveContextAttachmentCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,5,0,0"
+                                        Visibility="{Binding IsExtractingAttachments, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <ProgressBar IsIndeterminate="True" Width="90" Height="4" VerticalAlignment="Center" />
+                                <TextBlock Text="Извлекаем текст через OpenAI…" Style="{StaticResource SecondaryTextStyle}" Margin="10,0,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                        <Button Content="Отмена" Command="{Binding CancelContextEditCommand}" Margin="0,0,8,0" />
+                        <Button Content="Сохранить" Command="{Binding SaveContextCommand}" Style="{StaticResource PrimaryButtonStyle}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

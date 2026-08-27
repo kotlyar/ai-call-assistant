@@ -1,0 +1,55 @@
+name: Windows
+
+on:
+  push:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  pull_request:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore "windows/Callya.slnx"
+
+      - name: Test
+        run: dotnet test "windows/Callya.slnx" --configuration Release --no-restore --collect:"XPlat Code Coverage"
+
+      - name: Publish portable x64 package
+        shell: pwsh
+        run: ./windows/scripts/publish-windows.ps1 -Runtime win-x64 -SkipTests
+
+      - name: Ensure no obvious secret is packaged
+        shell: pwsh
+        run: |
+          $matches = Get-ChildItem "windows/artifacts/publish/win-x64" -File -Recurse |
+            Select-String -Pattern "sk-proj-", "sk-svcacct-", "OPENAI_API_KEY=" -SimpleMatch
+          if ($matches) { throw "Possible API credential found in publish output." }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Callya-Windows-win-x64
+          path: |
+            windows/artifacts/package/Callya-Windows-win-x64.zip
+            windows/artifacts/package/Callya-Windows-win-x64.zip.sha256
+          if-no-files-found: error

@@ -1,0 +1,205 @@
+<Window x:Class="AICallAssistant.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="clr-namespace:AICallAssistant.Core.Models;assembly=AICallAssistant.Core"
+        xmlns:views="clr-namespace:AICallAssistant.Desktop.Views"
+        Title="Callya"
+        Width="1080"
+        Height="740"
+        MinWidth="930"
+        MinHeight="650"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="228" />
+            <ColumnDefinition Width="1" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Background="{StaticResource SidebarBrush}">
+            <Grid Margin="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Orientation="Horizontal" Margin="7,7,4,22">
+                    <Border Width="30" Height="30" CornerRadius="9" Background="{StaticResource AccentBrush}">
+                        <TextBlock Text="AI" FontWeight="Bold" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Callya" FontWeight="SemiBold" FontSize="14" />
+                        <TextBlock Text="Windows" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Row="1">
+                    <Button Command="{Binding NavigateCommand}"
+                            CommandParameter="{x:Static models:AppSection.Setup}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource SidebarButtonStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CurrentSection}" Value="{x:Static models:AppSection.Setup}">
+                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="26" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="&#xE717;" FontFamily="Segoe Fluent Icons" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="Новый звонок" VerticalAlignment="Center" />
+                        </Grid>
+                    </Button>
+
+                    <Button Command="{Binding NavigateCommand}"
+                            CommandParameter="{x:Static models:AppSection.Contexts}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource SidebarButtonStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CurrentSection}" Value="{x:Static models:AppSection.Contexts}">
+                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="26" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="&#xE8A5;" FontFamily="Segoe Fluent Icons" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="Контексты" VerticalAlignment="Center" />
+                        </Grid>
+                    </Button>
+
+                    <Button Command="{Binding NavigateCommand}"
+                            CommandParameter="{x:Static models:AppSection.Recordings}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource SidebarButtonStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CurrentSection}" Value="{x:Static models:AppSection.Recordings}">
+                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="26" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="&#xE9D2;" FontFamily="Segoe Fluent Icons" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="Записи" VerticalAlignment="Center" />
+                            <Border Grid.Column="2" Background="{StaticResource RaisedSurfaceBrush}" CornerRadius="9" Padding="7,2">
+                                <TextBlock Text="{Binding Recordings.Count}" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Border>
+                        </Grid>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Grid.Row="3">
+                    <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,0,0,8" />
+                    <Button Command="{Binding NavigateCommand}"
+                            CommandParameter="{x:Static models:AppSection.Settings}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource SidebarButtonStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CurrentSection}" Value="{x:Static models:AppSection.Settings}">
+                                        <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="26" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="Настройки" VerticalAlignment="Center" />
+                        </Grid>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Column="1" Background="{StaticResource BorderBrush}" />
+
+        <Grid Grid.Column="2" Background="{StaticResource WindowBrush}">
+            <views:SetupView>
+                <views:SetupView.Style>
+                    <Style TargetType="views:SetupView">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="{x:Static models:AppSection.Setup}">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:SetupView.Style>
+            </views:SetupView>
+
+            <views:ContextsView>
+                <views:ContextsView.Style>
+                    <Style TargetType="views:ContextsView">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="{x:Static models:AppSection.Contexts}">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:ContextsView.Style>
+            </views:ContextsView>
+
+            <views:RecordingsView>
+                <views:RecordingsView.Style>
+                    <Style TargetType="views:RecordingsView">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="{x:Static models:AppSection.Recordings}">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:RecordingsView.Style>
+            </views:RecordingsView>
+
+            <views:SettingsView>
+                <views:SettingsView.Style>
+                    <Style TargetType="views:SettingsView">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CurrentSection}" Value="{x:Static models:AppSection.Settings}">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:SettingsView.Style>
+            </views:SettingsView>
+
+            <Border HorizontalAlignment="Center"
+                    VerticalAlignment="Bottom"
+                    Margin="24"
+                    Padding="16,10"
+                    CornerRadius="10"
+                    Background="#E9273344"
+                    BorderBrush="#4D5D72"
+                    BorderThickness="1"
+                    Visibility="{Binding IsNotificationVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TextBlock Text="{Binding NotificationText}" FontSize="13" />
+            </Border>
+        </Grid>
+    </Grid>
+</Window>
