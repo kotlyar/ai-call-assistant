@@ -54,7 +54,7 @@ struct AppShellView: View {
                 requestingPermission: model.requestingAudioPermission,
                 onRequest: model.requestAudioPermission,
                 onOpenSettings: model.openAudioPermissionSettings,
-                onRefresh: model.refreshAudioPermissions,
+                onRefresh: model.recheckAudioPermissions,
                 onComplete: model.completeAudioPermissionsOnboarding
             )
         }

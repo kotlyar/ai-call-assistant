@@ -83,10 +83,8 @@ struct SetupView: View {
             await audioLevelMonitor.stop()
             guard shouldMonitorAudio else { return }
             await audioLevelMonitor.configure(
-                incomingSource: incomingSource,
                 microphone: outgoingSource,
-                monitorMicrophone: canMonitorMicrophone,
-                monitorIncoming: canMonitorIncoming
+                monitorMicrophone: canMonitorMicrophone
             )
         }
         .onDisappear {
@@ -166,6 +164,7 @@ struct SetupView: View {
                 missingText: "Микрофон не найден",
                 compact: compact,
                 level: audioLevelMonitor.microphoneLevel,
+                showsLiveLevel: true,
                 onOpenPermissions: onOpenAudioPermissions
             )
 
@@ -178,7 +177,8 @@ struct SetupView: View {
                 authorizedText: "Системный звук подключён",
                 missingText: "Источник звука не найден",
                 compact: compact,
-                level: audioLevelMonitor.incomingLevel,
+                level: 0,
+                showsLiveLevel: false,
                 onOpenPermissions: onOpenAudioPermissions
             )
 
@@ -334,27 +334,20 @@ struct SetupView: View {
             && outgoingSources.contains(where: { $0.id == outgoingSource.id })
     }
 
-    private var canMonitorIncoming: Bool {
-        audioPermissions.systemAudio == .authorized
-            && incomingSources.contains(where: { $0.id == incomingSource.id })
-    }
-
     private var shouldMonitorAudio: Bool {
         !isDiscoveringAudioSources
             && !isPreparingAudio
             && !isFinalizingAudio
             && !isCallRunning
             && !isHandingOffToCall
-            && (canMonitorMicrophone || canMonitorIncoming)
+            && canMonitorMicrophone
     }
 
     /// SwiftUI cancels and recreates the monitor task whenever a selected
     /// device, permission or call-lifecycle state changes.
     private var monitorConfigurationID: String {
         [
-            incomingSource.id,
             outgoingSource.id,
-            canMonitorIncoming ? "incoming-on" : "incoming-off",
             canMonitorMicrophone ? "microphone-on" : "microphone-off",
             isDiscoveringAudioSources ? "discovering" : "discovered",
             isPreparingAudio ? "preparing" : "idle-preparation",
@@ -419,6 +412,7 @@ private struct HubAudioSourceRow: View {
     let missingText: String
     let compact: Bool
     let level: Double
+    let showsLiveLevel: Bool
     let onOpenPermissions: () -> Void
 
     var body: some View {
@@ -482,11 +476,26 @@ private struct HubAudioSourceRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            HubSegmentedLevelMeter(
-                level: level,
-                label: "Уровень: \(label.lowercased())",
-                segmentCount: compact ? 8 : 11
-            )
+            Group {
+                if showsLiveLevel {
+                    HubSegmentedLevelMeter(
+                        level: level,
+                        label: "Уровень: \(label.lowercased())",
+                        segmentCount: compact ? 8 : 11
+                    )
+                } else {
+                    HStack(spacing: 9) {
+                        Image(systemName: "speaker.wave.2")
+                            .font(.system(size: 18, weight: .regular))
+                        Text("Включится со звонком")
+                            .font(.system(size: 11, weight: .regular))
+                    }
+                    .foregroundStyle(MainWindowTheme.deckSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Системный звук включится после начала звонка")
+                }
+            }
                 .frame(
                     width: compact ? 128 : MainWindowTheme.primaryActionWidth,
                     height: 58

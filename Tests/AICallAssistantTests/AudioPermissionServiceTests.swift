@@ -6,10 +6,9 @@ final class AudioPermissionServiceTests: XCTestCase {
     func testInitialUnknownStateCanBeRequestedAndRetriedAfterDenial() async {
         var requestCount = 0
         let service = SystemAudioPermissionService(
-            preflightSystemAudioAccess: { false },
-            requestSystemAudioAccess: {
+            systemAudioAccessProbe: {
                 requestCount += 1
-                return false
+                return .denied
             }
         )
 
@@ -23,30 +22,48 @@ final class AudioPermissionServiceTests: XCTestCase {
         XCTAssertEqual(requestCount, 2)
     }
 
-    func testAcceptedRequestIsNotImmediatelyDowngradedByLaggingPreflight() async {
-        var preflightGranted = false
+    func testAcceptedProbeRemainsAuthorizedForCurrentProcess() async {
         let service = SystemAudioPermissionService(
-            preflightSystemAudioAccess: { preflightGranted },
-            requestSystemAudioAccess: { true }
+            systemAudioAccessProbe: { .authorized }
         )
 
         let request = await service.request(.systemAudio)
         XCTAssertEqual(request, .authorized)
         XCTAssertEqual(service.currentSnapshot().systemAudio, .authorized)
 
-        preflightGranted = true
         XCTAssertEqual(service.currentSnapshot().systemAudio, .authorized)
     }
 
-    func testExternalGrantTransitionsToAuthorized() {
-        var preflightGranted = false
+    func testTransientProbeFailureStaysRetryable() async {
+        var requestCount = 0
         let service = SystemAudioPermissionService(
-            preflightSystemAudioAccess: { preflightGranted },
-            requestSystemAudioAccess: { false }
+            systemAudioAccessProbe: {
+                requestCount += 1
+                return requestCount == 1 ? .notDetermined : .authorized
+            }
         )
 
         XCTAssertEqual(service.currentSnapshot().systemAudio, .notDetermined)
-        preflightGranted = true
+        let firstRequest = await service.request(.systemAudio)
+        XCTAssertEqual(firstRequest, .notDetermined)
+        XCTAssertEqual(service.currentSnapshot().systemAudio, .notDetermined)
+        let retry = await service.request(.systemAudio)
+        XCTAssertEqual(retry, .authorized)
         XCTAssertEqual(service.currentSnapshot().systemAudio, .authorized)
+    }
+
+    func testSystemAudioSettingsUsesAudioCapturePrivacyPane() {
+        var openedURL: URL?
+        let service = SystemAudioPermissionService(
+            systemAudioAccessProbe: { .authorized },
+            settingsURLOpener: { openedURL = $0 }
+        )
+
+        service.openSettings(for: .systemAudio)
+
+        XCTAssertEqual(
+            openedURL?.absoluteString,
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture"
+        )
     }
 }

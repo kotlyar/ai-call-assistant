@@ -16,7 +16,7 @@ struct AudioPermissionsOnboardingView: View {
             permissionList
                 .padding(.top, 29)
 
-            Label("Аудио и записи остаются на этом Mac.", systemImage: "lock")
+            Label("Экран не записывается. Аудио и записи остаются на этом Mac.", systemImage: "lock")
                 .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(PermissionsTheme.muted)
                 .labelStyle(.titleAndIcon)
@@ -60,7 +60,7 @@ struct AudioPermissionsOnboardingView: View {
                     .padding(.top, 4)
                     .accessibilityAddTraits(.isHeader)
 
-                Text("Разрешите два источника — отдельно для вашего голоса и звука собеседника.")
+                Text("Разрешите микрофон и системное аудио — отдельно для вашего голоса и звука собеседника.")
                     .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(PermissionsTheme.muted)
                     .lineSpacing(3)
@@ -89,9 +89,9 @@ struct AudioPermissionsOnboardingView: View {
             permissionRule
 
             PermissionRow(
-                title: "Экран и системный звук",
-                description: "Записывает звук приложения или всего Mac.",
-                systemImage: "display",
+                title: "Системное аудио",
+                description: "Получает только звук приложений — без изображения экрана.",
+                systemImage: "speaker.wave.2",
                 status: permissions.systemAudio,
                 isRequesting: requestingPermission == .systemAudio,
                 onRequest: { await onRequest(.systemAudio) },

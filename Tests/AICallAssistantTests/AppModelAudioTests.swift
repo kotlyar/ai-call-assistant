@@ -184,6 +184,224 @@ final class AppModelAudioTests: XCTestCase {
         XCTAssertEqual(model.contexts, [explicitContext])
     }
 
+    func testBackgroundPersistedStateLoadPublishesContextsAndRecordings() async throws {
+        let rootURL = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let contextStore = ContextLibraryStore(
+            rootURL: rootURL.appendingPathComponent("ContextLibrary", isDirectory: true)
+        )
+        let storage = RecordingStorageService(
+            rootURL: rootURL.appendingPathComponent("Recordings", isDirectory: true)
+        )
+        let persistedContext = CallContext(
+            title: "Persisted context",
+            body: "Loaded after the first frame",
+            isSelected: true
+        )
+        let persistedRecording = Recording(
+            title: "Persisted recording",
+            startedAt: Date(timeIntervalSince1970: 10),
+            duration: 42,
+            folderName: "persisted-recording",
+            turns: []
+        )
+        try contextStore.save([persistedContext])
+        try storage.save(persistedRecording)
+
+        let defaults = isolatedUserDefaults()
+        let model = AppModel(
+            engine: DemoCallEngine(automaticUpdatesEnabled: false),
+            audioCaptureService: FakeAudioCaptureService(
+                catalog: AudioSourceCatalog(incoming: [], microphones: [])
+            ),
+            audioPlaybackService: FakeAudioPlaybackService(),
+            audioPermissionService: FakeAudioPermissionService(authorized: true),
+            recordingStorage: storage,
+            contextLibraryStore: contextStore,
+            openAISettings: isolatedOpenAISettings(userDefaults: defaults),
+            reconciliationCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            finalAnalysisCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            userDefaults: defaults,
+            loadsPersistedStateInBackground: true
+        )
+
+        await waitUntil {
+            model.contexts == [persistedContext]
+                && model.recordings == [persistedRecording]
+        }
+        XCTAssertEqual(model.selectedRecordingID, persistedRecording.id)
+    }
+
+    func testBackgroundContextReadinessDoesNotWaitForRecordingHistoryLoad() async {
+        let rootURL = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let persistedContext = CallContext(
+            title: "Ready context",
+            body: "Published independently from history",
+            isSelected: true
+        )
+        let recordingLoader = BlockingValueLoader<[Recording]>(value: [])
+        defer { recordingLoader.release() }
+        let defaults = isolatedUserDefaults()
+        let model = AppModel(
+            engine: DemoCallEngine(automaticUpdatesEnabled: false),
+            audioCaptureService: FakeAudioCaptureService(
+                catalog: AudioSourceCatalog(incoming: [], microphones: [])
+            ),
+            audioPlaybackService: FakeAudioPlaybackService(),
+            audioPermissionService: FakeAudioPermissionService(authorized: true),
+            recordingStorage: RecordingStorageService(
+                rootURL: rootURL.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            recordingLoader: { try recordingLoader.load() },
+            contextLibraryStore: ContextLibraryStore(
+                rootURL: rootURL.appendingPathComponent("ContextLibrary", isDirectory: true)
+            ),
+            contextLibraryLoader: { [persistedContext] },
+            openAISettings: isolatedOpenAISettings(userDefaults: defaults),
+            reconciliationCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            finalAnalysisCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            userDefaults: defaults,
+            loadsPersistedStateInBackground: true
+        )
+
+        await waitUntil { recordingLoader.hasStarted }
+        await waitUntil { model.contexts == [persistedContext] }
+        XCTAssertEqual(model.contexts, [persistedContext])
+    }
+
+    func testContextSavedBeforeBackgroundLoadMergesWithPersistedLibrary() async throws {
+        let rootURL = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let contextStore = ContextLibraryStore(
+            rootURL: rootURL.appendingPathComponent("ContextLibrary", isDirectory: true)
+        )
+        let persistedContext = CallContext(
+            title: "Persisted context",
+            body: "Must survive the startup race",
+            isSelected: false
+        )
+        try contextStore.save([persistedContext])
+
+        let loader = BlockingValueLoader(value: [persistedContext])
+        defer { loader.release() }
+        let defaults = isolatedUserDefaults()
+        let model = AppModel(
+            engine: DemoCallEngine(automaticUpdatesEnabled: false),
+            audioCaptureService: FakeAudioCaptureService(
+                catalog: AudioSourceCatalog(incoming: [], microphones: [])
+            ),
+            audioPlaybackService: FakeAudioPlaybackService(),
+            audioPermissionService: FakeAudioPermissionService(authorized: true),
+            recordingStorage: RecordingStorageService(
+                rootURL: rootURL.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            contextLibraryStore: contextStore,
+            contextLibraryLoader: { try loader.load() },
+            openAISettings: isolatedOpenAISettings(userDefaults: defaults),
+            reconciliationCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            finalAnalysisCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            userDefaults: defaults,
+            loadsPersistedStateInBackground: true,
+            recordings: []
+        )
+
+        await waitUntil { loader.hasStarted }
+        model.createContext()
+        model.saveContext(
+            title: "Created during launch",
+            body: "Must be merged after the read",
+            attachments: []
+        )
+
+        // No partial in-memory snapshot may replace the library while its
+        // initial read is still pending.
+        XCTAssertEqual(try contextStore.load(), [persistedContext])
+
+        loader.release()
+        await waitUntil {
+            model.contexts.map(\.title) == [
+                "Persisted context",
+                "Created during launch"
+            ]
+        }
+        let shouldTerminate = await model.prepareForTermination()
+        XCTAssertTrue(shouldTerminate)
+        XCTAssertEqual(try contextStore.load(), model.contexts)
+    }
+
+    func testStartCallWaitsForBackgroundContextLoadBeforeFreezingContexts() async throws {
+        let rootURL = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let contextStore = ContextLibraryStore(
+            rootURL: rootURL.appendingPathComponent("ContextLibrary", isDirectory: true)
+        )
+        let persistedContext = CallContext(
+            title: "Persisted selected context",
+            body: "Must be present in the call snapshot",
+            isSelected: true
+        )
+        try contextStore.save([persistedContext])
+
+        let loader = BlockingValueLoader(value: [persistedContext])
+        defer { loader.release() }
+        let microphone = AudioSourceOption(
+            id: "microphone:test",
+            title: "Test Microphone",
+            kind: .microphone(uniqueID: "test")
+        )
+        let capture = FakeAudioCaptureService(
+            catalog: AudioSourceCatalog(
+                incoming: [.systemAudio],
+                microphones: [microphone]
+            )
+        )
+        let storage = RecordingStorageService(
+            rootURL: rootURL.appendingPathComponent("Recordings", isDirectory: true)
+        )
+        let defaults = isolatedUserDefaults()
+        let model = AppModel(
+            engine: DemoCallEngine(automaticUpdatesEnabled: false),
+            transcriptService: TranscriptFileService(documentsURL: rootURL),
+            audioCaptureService: capture,
+            audioPlaybackService: FakeAudioPlaybackService(),
+            audioPermissionService: FakeAudioPermissionService(authorized: true),
+            recordingStorage: storage,
+            contextLibraryStore: contextStore,
+            contextLibraryLoader: { try loader.load() },
+            openAISettings: isolatedOpenAISettings(userDefaults: defaults),
+            reconciliationCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            finalAnalysisCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            userDefaults: defaults,
+            loadsPersistedStateInBackground: true,
+            recordings: []
+        )
+        await model.refreshAudioSources()
+        await waitUntil { loader.hasStarted }
+
+        let resultProbe = StartCallResultProbe()
+        let startTask = Task { @MainActor in
+            let result = await model.startCall()
+            await resultProbe.set(result)
+            return result
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let earlyResult = await resultProbe.result
+        XCTAssertNil(earlyResult)
+        XCTAssertTrue(capture.startRequests.isEmpty)
+
+        loader.release()
+        let didStart = await startTask.value
+        XCTAssertTrue(didStart)
+        let draft = try XCTUnwrap(storage.loadAll().first)
+        XCTAssertEqual(
+            draft.transcription?.frozenContexts.contexts.map(\.sourceContextID),
+            [persistedContext.id]
+        )
+
+        await model.finishCall()
+    }
+
     func testEditAfterUnreadableLibraryPreservesRecoveryCopy() async throws {
         let rootURL = temporaryRoot()
         defer { try? FileManager.default.removeItem(at: rootURL.deletingLastPathComponent()) }
@@ -357,6 +575,333 @@ final class AppModelAudioTests: XCTestCase {
                     .appendingPathComponent("transcript.txt")
                     .path
             )
+        )
+    }
+
+    func testStartupMaintenanceDoesNotRecoverDraftForActiveCall() async throws {
+        let rootURL = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = RecordingStorageService(rootURL: rootURL)
+        let configuration = GuidanceConfigurationSnapshot.frozen(
+            from: GuidanceConfiguration.default
+        )
+        let frozenContexts = FrozenContextSnapshot(
+            id: "ctx-startup-maintenance",
+            frozenAt: Date(timeIntervalSince1970: 1),
+            contexts: []
+        )
+        let staleID = UUID()
+        let staleRecording = Recording(
+            id: staleID,
+            title: "Interrupted before launch",
+            startedAt: Date(timeIntervalSince1970: 10),
+            duration: 1,
+            folderName: "startup-maintenance-stale-call",
+            turns: [],
+            transcription: RecordingTranscriptionMetadata(
+                callState: .capturing,
+                liveStatus: .running,
+                reconciliationStatus: .pending,
+                finalAnalysisStatus: .waitingForReconciliation,
+                incomingRealtimeStatus: .live,
+                outgoingRealtimeStatus: .live,
+                liveRevision: 0,
+                canonicalRevision: nil,
+                liveJournalSealedAt: nil,
+                provider: "openai",
+                realtimeModelID: configuration.realtimeTranscriptionModelID,
+                fileTranscriptionModelID: configuration.fileTranscriptionModelID,
+                responsesModelID: configuration.responsesModelID,
+                frozenContexts: frozenContexts,
+                frozenConfiguration: configuration,
+                lastErrorCode: nil
+            )
+        )
+        try storage.save(staleRecording)
+
+        let secretStore = OrderedReadGateSecretStore()
+        defer { secretStore.releaseAllReads() }
+        let userDefaults = isolatedUserDefaults()
+        let microphone = AudioSourceOption(
+            id: "microphone:test",
+            title: "Test Microphone",
+            kind: .microphone(uniqueID: "test")
+        )
+        let model = AppModel(
+            engine: DemoCallEngine(automaticUpdatesEnabled: false),
+            transcriptService: TranscriptFileService(documentsURL: rootURL),
+            audioCaptureService: FakeAudioCaptureService(
+                catalog: AudioSourceCatalog(
+                    incoming: [.systemAudio],
+                    microphones: [microphone]
+                )
+            ),
+            audioPlaybackService: FakeAudioPlaybackService(),
+            audioPermissionService: FakeAudioPermissionService(authorized: true),
+            recordingStorage: storage,
+            contextLibraryStore: isolatedContextLibraryStore(),
+            openAISettings: OpenAISettingsStore(
+                userDefaults: userDefaults,
+                secretStore: secretStore
+            ),
+            reconciliationCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            finalAnalysisCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            userDefaults: userDefaults,
+            recordings: [staleRecording]
+        )
+
+        let startupCredentialReadStarted = await eventuallyAsync {
+            secretStore.readCount >= 1
+        }
+        guard startupCredentialReadStarted else {
+            XCTFail("Startup maintenance did not begin its credential read")
+            return
+        }
+
+        await model.refreshAudioSources()
+        let startTask = Task { @MainActor in
+            await model.startCall()
+        }
+        let activeCallCredentialReadStarted = await eventuallyAsync {
+            secretStore.readCount >= 2
+        }
+        guard activeCallCredentialReadStarted else {
+            XCTFail("The active call did not reach its credential read")
+            return
+        }
+
+        // Resume startup maintenance while startCall is suspended after it has
+        // persisted the active draft and reserved its call ID.
+        secretStore.releaseRead(0)
+        await waitUntil {
+            model.recordings.first(where: { $0.id == staleID })?
+                .transcription?.callState == .interrupted
+        }
+
+        let activeDraftDuringMaintenance = try XCTUnwrap(
+            try storage.loadAll().first(where: { $0.id != staleID })
+        )
+
+        secretStore.releaseRead(1)
+        let didStart = await startTask.value
+
+        XCTAssertTrue(didStart)
+        XCTAssertEqual(
+            activeDraftDuringMaintenance.transcription?.callState,
+            .draft,
+            "Startup maintenance must not classify the live call as interrupted"
+        )
+        XCTAssertEqual(
+            try storage.load(folderName: activeDraftDuringMaintenance.folderName)
+                .transcription?.callState,
+            .capturing
+        )
+
+        await model.finishCall()
+    }
+
+    func testStaleMaintenanceSnapshotCannotRecoverCallFinishedDuringScan() async throws {
+        let rootURL = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = RecordingStorageService(rootURL: rootURL)
+        let configuration = GuidanceConfigurationSnapshot.frozen(
+            from: GuidanceConfiguration.default
+        )
+        let frozenContexts = FrozenContextSnapshot(
+            id: "ctx-stale-maintenance-snapshot",
+            frozenAt: Date(timeIntervalSince1970: 1),
+            contexts: []
+        )
+        let staleID = UUID()
+        let staleRecording = Recording(
+            id: staleID,
+            title: "Interrupted before launch",
+            startedAt: Date(timeIntervalSince1970: 10),
+            duration: 1,
+            folderName: "stale-maintenance-snapshot-barrier",
+            turns: [],
+            transcription: RecordingTranscriptionMetadata(
+                callState: .capturing,
+                liveStatus: .running,
+                reconciliationStatus: .pending,
+                finalAnalysisStatus: .waitingForReconciliation,
+                incomingRealtimeStatus: .live,
+                outgoingRealtimeStatus: .live,
+                liveRevision: 0,
+                canonicalRevision: nil,
+                liveJournalSealedAt: nil,
+                provider: "openai",
+                realtimeModelID: configuration.realtimeTranscriptionModelID,
+                fileTranscriptionModelID: configuration.fileTranscriptionModelID,
+                responsesModelID: configuration.responsesModelID,
+                frozenContexts: frozenContexts,
+                frozenConfiguration: configuration,
+                lastErrorCode: nil
+            )
+        )
+        try storage.save(staleRecording)
+
+        let snapshotLoader = BlockingRecordingSnapshotLoader(storage: storage)
+        defer { snapshotLoader.release() }
+        let secretStore = OrderedReadGateSecretStore()
+        defer { secretStore.releaseAllReads() }
+        let userDefaults = isolatedUserDefaults()
+        let microphone = AudioSourceOption(
+            id: "microphone:test",
+            title: "Test Microphone",
+            kind: .microphone(uniqueID: "test")
+        )
+        let model = AppModel(
+            engine: DemoCallEngine(automaticUpdatesEnabled: false),
+            transcriptService: TranscriptFileService(documentsURL: rootURL),
+            audioCaptureService: FakeAudioCaptureService(
+                catalog: AudioSourceCatalog(
+                    incoming: [.systemAudio],
+                    microphones: [microphone]
+                )
+            ),
+            audioPlaybackService: FakeAudioPlaybackService(),
+            audioPermissionService: FakeAudioPermissionService(authorized: true),
+            recordingStorage: storage,
+            recordingLoader: { try snapshotLoader.load() },
+            contextLibraryStore: isolatedContextLibraryStore(),
+            openAISettings: OpenAISettingsStore(
+                userDefaults: userDefaults,
+                secretStore: secretStore
+            ),
+            reconciliationCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            finalAnalysisCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            userDefaults: userDefaults,
+            recordings: [staleRecording]
+        )
+
+        let startupCredentialReadStarted = await eventuallyAsync {
+            secretStore.readCount >= 1
+        }
+        guard startupCredentialReadStarted else {
+            XCTFail("Startup maintenance did not begin its credential read")
+            return
+        }
+
+        await model.refreshAudioSources()
+        let startTask = Task { @MainActor in
+            await model.startCall()
+        }
+        let activeCallCredentialReadStarted = await eventuallyAsync {
+            secretStore.readCount >= 2
+        }
+        guard activeCallCredentialReadStarted else {
+            XCTFail("The active call did not reach its credential read")
+            return
+        }
+
+        // Let the call reach .capturing while startup maintenance is still
+        // held before its recording scan.
+        secretStore.releaseRead(1)
+        let didStart = await startTask.value
+        XCTAssertTrue(didStart)
+        let activeID = try XCTUnwrap(
+            try storage.loadAll().first(where: { $0.id != staleID })?.id
+        )
+
+        // The loader captures the active .capturing metadata, then holds that
+        // exact stale snapshot while finishCall persists the final recording.
+        secretStore.releaseRead(0)
+        await waitUntil { snapshotLoader.hasCapturedSnapshot }
+        await model.finishCall()
+        await waitUntil {
+            guard let status = model.recordings.first(where: { $0.id == activeID })?
+                .transcription?.reconciliationStatus else { return false }
+            return status != .pending && status != .running
+        }
+        let finalizedBeforeMaintenance = try XCTUnwrap(
+            try storage.loadAll().first(where: { $0.id == activeID })
+        )
+        XCTAssertEqual(finalizedBeforeMaintenance.transcription?.callState, .saved)
+
+        snapshotLoader.release()
+        await waitUntil {
+            model.recordings.first(where: { $0.id == staleID })?
+                .transcription?.callState == .interrupted
+        }
+
+        let afterStaleSnapshot = try XCTUnwrap(
+            try storage.loadAll().first(where: { $0.id == activeID })
+        )
+        XCTAssertEqual(afterStaleSnapshot, finalizedBeforeMaintenance)
+        XCTAssertEqual(afterStaleSnapshot.transcription?.callState, .saved)
+    }
+
+    func testCredentialRefreshCanResumeSavedCallCreatedThisLaunch() async throws {
+        let rootURL = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = RecordingStorageService(rootURL: rootURL)
+        let userDefaults = isolatedUserDefaults()
+        let settings = OpenAISettingsStore(
+            userDefaults: userDefaults,
+            secretStore: EmptyTestSecretStore()
+        )
+        let microphone = AudioSourceOption(
+            id: "microphone:test",
+            title: "Test Microphone",
+            kind: .microphone(uniqueID: "test")
+        )
+        let model = AppModel(
+            engine: DemoCallEngine(automaticUpdatesEnabled: false),
+            transcriptService: TranscriptFileService(documentsURL: rootURL),
+            audioCaptureService: FakeAudioCaptureService(
+                catalog: AudioSourceCatalog(
+                    incoming: [.systemAudio],
+                    microphones: [microphone]
+                )
+            ),
+            audioPlaybackService: FakeAudioPlaybackService(),
+            audioPermissionService: FakeAudioPermissionService(authorized: true),
+            recordingStorage: storage,
+            contextLibraryStore: isolatedContextLibraryStore(),
+            openAISettings: settings,
+            reconciliationCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            finalAnalysisCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            userDefaults: userDefaults,
+            recordings: []
+        )
+
+        await model.refreshAudioSources()
+        let didStart = await model.startCall()
+        XCTAssertTrue(didStart)
+        await model.finishCall()
+        let callID = try XCTUnwrap(model.recordings.first?.id)
+        await waitUntil {
+            guard let status = model.recordings.first(where: { $0.id == callID })?
+                .transcription?.reconciliationStatus else { return false }
+            return status != .pending && status != .running
+        }
+
+        var credentialBlocked = try XCTUnwrap(
+            try storage.loadAll().first(where: { $0.id == callID })
+        )
+        credentialBlocked.transcription?.reconciliationStatus = .blockedByCredential
+        try storage.save(credentialBlocked)
+        model.recordings = [credentialBlocked]
+
+        try await settings.saveAPIKey("unit-test-key")
+        await waitUntil {
+            model.recordings.first(where: { $0.id == callID })?
+                .transcription?.reconciliationStatus != .blockedByCredential
+        }
+
+        XCTAssertNotEqual(
+            model.recordings.first(where: { $0.id == callID })?
+                .transcription?.reconciliationStatus,
+            .blockedByCredential
+        )
+        XCTAssertEqual(
+            model.recordings.first(where: { $0.id == callID })?
+                .transcription?.callState,
+            .saved
         )
     }
 
@@ -669,7 +1214,7 @@ final class AppModelAudioTests: XCTestCase {
         XCTAssertTrue(capture.startRequests.isEmpty)
     }
 
-    func testPermissionRequestUsesAcceptedResultWhilePreflightCatchesUp() async {
+    func testPermissionRequestUsesAcceptedProbeResult() async {
         let permissions = FakeAudioPermissionService(authorized: false)
         let userDefaults = isolatedUserDefaults()
         let model = AppModel(
@@ -690,6 +1235,51 @@ final class AppModelAudioTests: XCTestCase {
         await model.requestAudioPermission(.systemAudio)
 
         XCTAssertEqual(model.audioPermissions.systemAudio, .authorized)
+    }
+
+    func testUnknownSystemAudioPermissionIsProbedBeforeSourceDiscovery() async {
+        let microphone = AudioSourceOption(
+            id: "microphone:test",
+            title: "Test Microphone",
+            kind: .microphone(uniqueID: "test")
+        )
+        let capture = FakeAudioCaptureService(
+            catalog: AudioSourceCatalog(
+                incoming: [.systemAudio],
+                microphones: [microphone]
+            )
+        )
+        let permissions = FakeAudioPermissionService(
+            snapshot: AudioPermissionSnapshot(
+                microphone: .authorized,
+                systemAudio: .notDetermined
+            ),
+            requestResult: .authorized
+        )
+        let userDefaults = isolatedUserDefaults()
+        userDefaults.set(
+            true,
+            forKey: "com.aicallassistant.onboarding.audio-permissions-seen"
+        )
+        let model = AppModel(
+            engine: DemoCallEngine(automaticUpdatesEnabled: false),
+            audioCaptureService: capture,
+            audioPlaybackService: FakeAudioPlaybackService(),
+            audioPermissionService: permissions,
+            contextLibraryStore: isolatedContextLibraryStore(),
+            openAISettings: isolatedOpenAISettings(userDefaults: userDefaults),
+            reconciliationCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            finalAnalysisCredentialProviderFactory: { EmptyTestCredentialProvider() },
+            userDefaults: userDefaults,
+            recordings: []
+        )
+
+        await model.refreshAudioSources()
+
+        XCTAssertEqual(permissions.requestedKinds, [.systemAudio])
+        XCTAssertEqual(model.audioPermissions.systemAudio, .authorized)
+        XCTAssertEqual(model.outgoingSources, [microphone])
+        XCTAssertEqual(capture.discoverCount, 1)
     }
 
     func testDeniedSystemAudioRequestOpensTheCorrectSettingsPane() async {
@@ -960,6 +1550,84 @@ final class AppModelAudioTests: XCTestCase {
     }
 }
 
+private final class BlockingValueLoader<Value: Sendable>: @unchecked Sendable {
+    private let value: Value
+    private let lock = NSLock()
+    private let releaseSemaphore = DispatchSemaphore(value: 0)
+    private var didStart = false
+    private var didRelease = false
+
+    init(value: Value) {
+        self.value = value
+    }
+
+    var hasStarted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return didStart
+    }
+
+    func load() throws -> Value {
+        lock.lock()
+        didStart = true
+        let shouldWait = !didRelease
+        lock.unlock()
+        if shouldWait {
+            releaseSemaphore.wait()
+        }
+        return value
+    }
+
+    func release() {
+        lock.lock()
+        let shouldSignal = !didRelease
+        didRelease = true
+        lock.unlock()
+        if shouldSignal {
+            releaseSemaphore.signal()
+        }
+    }
+}
+
+private final class BlockingRecordingSnapshotLoader: @unchecked Sendable {
+    private let storage: RecordingStorageService
+    private let lock = NSLock()
+    private let releaseSemaphore = DispatchSemaphore(value: 0)
+    private var didCaptureSnapshot = false
+    private var didRelease = false
+
+    init(storage: RecordingStorageService) {
+        self.storage = storage
+    }
+
+    var hasCapturedSnapshot: Bool {
+        lock.withLock { didCaptureSnapshot }
+    }
+
+    func load() throws -> [Recording] {
+        let snapshot = try storage.loadAll()
+        let shouldWait = lock.withLock { () -> Bool in
+            didCaptureSnapshot = true
+            return !didRelease
+        }
+        if shouldWait {
+            releaseSemaphore.wait()
+        }
+        return snapshot
+    }
+
+    func release() {
+        let shouldSignal = lock.withLock { () -> Bool in
+            guard !didRelease else { return false }
+            didRelease = true
+            return true
+        }
+        if shouldSignal {
+            releaseSemaphore.signal()
+        }
+    }
+}
+
 private struct EmptyTestSecretStore: SecretStore {
     func readSecret(for identifier: SecretIdentifier) throws -> String? { nil }
     func writeSecret(_ secret: String, for identifier: SecretIdentifier) throws {}
@@ -972,6 +1640,42 @@ private struct StaticTestSecretStore: SecretStore {
     func readSecret(for identifier: SecretIdentifier) throws -> String? { secret }
     func writeSecret(_ secret: String, for identifier: SecretIdentifier) throws {}
     func deleteSecret(for identifier: SecretIdentifier) throws {}
+}
+
+private final class OrderedReadGateSecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private let readGates = [
+        DispatchSemaphore(value: 0),
+        DispatchSemaphore(value: 0)
+    ]
+    private var readCountStorage = 0
+
+    var readCount: Int {
+        lock.withLock { readCountStorage }
+    }
+
+    func readSecret(for identifier: SecretIdentifier) throws -> String? {
+        let readIndex = lock.withLock { () -> Int in
+            defer { readCountStorage += 1 }
+            return readCountStorage
+        }
+        if readGates.indices.contains(readIndex) {
+            readGates[readIndex].wait()
+        }
+        return nil
+    }
+
+    func writeSecret(_ secret: String, for identifier: SecretIdentifier) throws {}
+    func deleteSecret(for identifier: SecretIdentifier) throws {}
+
+    func releaseRead(_ index: Int) {
+        guard readGates.indices.contains(index) else { return }
+        readGates[index].signal()
+    }
+
+    func releaseAllReads() {
+        readGates.forEach { $0.signal() }
+    }
 }
 
 private actor RecordingContextFileTextExtractor: ContextFileTextExtracting {
@@ -1151,6 +1855,7 @@ private final class FakeAudioPermissionService: AudioPermissionService {
     var snapshot: AudioPermissionSnapshot
     var requestResult: AudioPermissionStatus
     var openedSettings: [AudioPermissionKind] = []
+    var requestedKinds: [AudioPermissionKind] = []
 
     init(
         authorized: Bool,
@@ -1161,12 +1866,21 @@ private final class FakeAudioPermissionService: AudioPermissionService {
         self.requestResult = requestResult
     }
 
+    init(
+        snapshot: AudioPermissionSnapshot,
+        requestResult: AudioPermissionStatus
+    ) {
+        self.snapshot = snapshot
+        self.requestResult = requestResult
+    }
+
     func currentSnapshot() -> AudioPermissionSnapshot {
         snapshot
     }
 
     func request(_ kind: AudioPermissionKind) async -> AudioPermissionStatus {
-        requestResult
+        requestedKinds.append(kind)
+        return requestResult
     }
 
     func openSettings(for kind: AudioPermissionKind) {

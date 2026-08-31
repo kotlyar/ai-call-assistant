@@ -1,7 +1,7 @@
 @preconcurrency import AVFoundation
+import AudioToolbox
 import CoreMedia
 import Foundation
-import ScreenCaptureKit
 
 @MainActor
 final class RealAudioCaptureService: AudioCaptureService {
@@ -16,8 +16,8 @@ final class RealAudioCaptureService: AudioCaptureService {
     private let microphoneQueue = DispatchQueue(label: "com.aicallassistant.capture.microphone")
     private let microphoneControlQueue = DispatchQueue(label: "com.aicallassistant.capture.microphone-control")
 
-    private var systemStream: SCStream?
-    private var systemOutput: SystemAudioOutput?
+    private var systemTap: CoreAudioProcessTap?
+    private var systemOutput: CoreAudioTapOutput?
     private var microphoneSession: AVCaptureSession?
     private var microphoneOutput: AVCaptureAudioDataOutput?
     private var microphoneDelegate: MicrophoneAudioOutput?
@@ -36,62 +36,7 @@ final class RealAudioCaptureService: AudioCaptureService {
     }
 
     func discoverSources() async throws -> AudioSourceCatalog {
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            true,
-            onScreenWindowsOnly: false
-        )
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        let visiblePIDs = Set(content.windows.compactMap { $0.owningApplication?.processID })
-
-        let applicationSources = content.applications
-            .filter { application in
-                application.processID != ownPID
-                    && visiblePIDs.contains(application.processID)
-                    && !application.applicationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-            .map { application in
-                let stableID = application.bundleIdentifier.isEmpty
-                    ? "process:\(application.processID)"
-                    : "application:\(application.bundleIdentifier)"
-                return AudioSourceOption(
-                    id: stableID,
-                    title: application.applicationName,
-                    kind: .application(
-                        bundleIdentifier: application.bundleIdentifier,
-                        processID: application.processID
-                    )
-                )
-            }
-            .uniqued(by: \AudioSourceOption.id)
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-
-        var microphoneSources = Self.microphoneDevices()
-            .map { device in
-                AudioSourceOption(
-                    id: "microphone:\(device.uniqueID)",
-                    title: device.localizedName,
-                    kind: .microphone(uniqueID: device.uniqueID)
-                )
-            }
-            .uniqued(by: \.id)
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-
-        if let defaultID = AVCaptureDevice.default(for: .audio)?.uniqueID,
-           let index = microphoneSources.firstIndex(where: {
-               if case let .microphone(uniqueID) = $0.kind {
-                   return uniqueID == defaultID
-               }
-               return false
-           }),
-           index != microphoneSources.startIndex {
-            let defaultSource = microphoneSources.remove(at: index)
-            microphoneSources.insert(defaultSource, at: 0)
-        }
-
-        return AudioSourceCatalog(
-            incoming: [.systemAudio] + applicationSources,
-            microphones: microphoneSources
-        )
+        try await CoreAudioSourceDiscoveryService().discoverSources()
     }
 
     func start(
@@ -116,16 +61,8 @@ final class RealAudioCaptureService: AudioCaptureService {
         let outgoingWriter = SampleBufferAudioWriter(outputURL: outgoingURL, timeline: timeline)
 
         do {
-            let content = try await SCShareableContent.excludingDesktopWindows(
-                false,
-                onScreenWindowsOnly: false
-            )
-            let filter = try Self.makeContentFilter(
-                for: request.incomingSource,
-                content: content
-            )
-            let streamConfiguration = Self.makeStreamConfiguration()
-            let systemOutput = SystemAudioOutput(
+            let systemOutput = CoreAudioTapOutput(
+                queue: systemAudioQueue,
                 writer: incomingWriter,
                 timeline: timeline,
                 activationGate: activationGate,
@@ -135,15 +72,14 @@ final class RealAudioCaptureService: AudioCaptureService {
                     self?.streamFailure = error
                 }
             }
-            let stream = SCStream(
-                filter: filter,
-                configuration: streamConfiguration,
-                delegate: systemOutput
-            )
-            try stream.addStreamOutput(
-                systemOutput,
-                type: .audio,
-                sampleHandlerQueue: systemAudioQueue
+            let systemTap = CoreAudioProcessTap(
+                scope: try Self.tapScope(for: request.incomingSource),
+                onFrames: { [weak systemOutput] batch in
+                    systemOutput?.receive(batch)
+                },
+                onFailure: { [weak systemOutput] failure in
+                    systemOutput?.receive(failure)
+                }
             )
 
             let microphone = try resolveMicrophone(request.microphone)
@@ -160,7 +96,7 @@ final class RealAudioCaptureService: AudioCaptureService {
             self.outgoingWriter = outgoingWriter
             activeLiveAudioSink = liveAudioSink
             self.activationGate = activationGate
-            systemStream = stream
+            self.systemTap = systemTap
             self.systemOutput = systemOutput
             microphoneSession = microphoneCapture.session
             microphoneOutput = microphoneCapture.output
@@ -174,7 +110,7 @@ final class RealAudioCaptureService: AudioCaptureService {
             )
 
             do {
-                try await stream.startCapture()
+                try await systemTap.start()
                 try await startMicrophoneSession(microphoneCapture.session)
                 microphoneCapture.delegate.session = microphoneCapture.session
                 // Flush callbacks already queued during startup while the gate is
@@ -188,7 +124,7 @@ final class RealAudioCaptureService: AudioCaptureService {
             } catch {
                 isStopping = true
                 activationGate.close()
-                try? await stream.stopCapture()
+                _ = try? await systemTap.stop()
                 await stopMicrophoneSession(microphoneCapture.session)
                 await drainCaptureQueues()
                 liveAudioSink?.stopAccepting()
@@ -200,6 +136,9 @@ final class RealAudioCaptureService: AudioCaptureService {
         } catch let error as AudioCaptureError {
             clearActiveCapture()
             throw error
+        } catch let error as CoreAudioProcessTap.CaptureFailure {
+            clearActiveCapture()
+            throw Self.captureError(from: error, source: request.incomingSource)
         } catch {
             clearActiveCapture()
             throw AudioCaptureError.captureConfigurationFailed(error.localizedDescription)
@@ -213,15 +152,16 @@ final class RealAudioCaptureService: AudioCaptureService {
             throw AudioCaptureError.notRecording
         }
 
-        let stream = systemStream
+        let systemTap = systemTap
         let microphoneSession = microphoneSession
         isStopping = true
         activationGate?.close()
 
         var systemStopError: Error?
-        if let stream {
+        var tapDroppedPackets: UInt64 = 0
+        if let systemTap {
             do {
-                try await stream.stopCapture()
+                tapDroppedPackets = try await systemTap.stop()
             } catch {
                 systemStopError = error
             }
@@ -258,6 +198,9 @@ final class RealAudioCaptureService: AudioCaptureService {
         }
         if outgoingWriterDroppedBuffers > 0 {
             warnings.append(.outgoing("пропущено аудиобуферов: \(outgoingWriterDroppedBuffers)"))
+        }
+        if tapDroppedPackets > 0 {
+            warnings.append(.incoming("Core Audio пропустил пакетов: \(tapDroppedPackets)"))
         }
 
         if let finalStreamFailure {
@@ -449,7 +392,7 @@ final class RealAudioCaptureService: AudioCaptureService {
         }
         microphoneObservers = []
         activeRequest = nil
-        systemStream = nil
+        systemTap = nil
         systemOutput = nil
         microphoneOutput?.setSampleBufferDelegate(nil, queue: nil)
         microphoneOutput = nil
@@ -465,110 +408,62 @@ final class RealAudioCaptureService: AudioCaptureService {
         isStopping = false
     }
 
-    private static func makeStreamConfiguration() -> SCStreamConfiguration {
-        let configuration = SCStreamConfiguration()
-        configuration.width = 2
-        configuration.height = 2
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-        configuration.queueDepth = 3
-        configuration.showsCursor = false
-        configuration.capturesAudio = true
-        configuration.excludesCurrentProcessAudio = true
-        configuration.sampleRate = 48_000
-        configuration.channelCount = 2
-        return configuration
-    }
-
-    private static func makeContentFilter(
-        for source: AudioSourceOption,
-        content: SCShareableContent
-    ) throws -> SCContentFilter {
-        guard !content.displays.isEmpty else {
-            throw AudioCaptureError.systemAudioUnavailable
-        }
-
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-
-        if case .systemAudio = source.kind {
-            let ownApplications = content.applications.filter { $0.processID == ownPID }
-            return SCContentFilter(
-                display: content.displays[0],
-                excludingApplications: ownApplications,
-                exceptingWindows: []
-            )
-        }
-
-        guard case let .application(bundleIdentifier, processID) = source.kind else {
+    private static func tapScope(
+        for source: AudioSourceOption
+    ) throws -> CoreAudioProcessTap.Scope {
+        switch source.kind {
+        case .systemAudio:
+            // The engine always excludes Callya itself as a final safety net.
+            return .systemAudio()
+        case let .application(_, processID):
+            guard processID > 0 else {
+                throw AudioCaptureError.sourceApplicationUnavailable(source.title)
+            }
+            return .processes([processID])
+        case .microphone:
             throw AudioCaptureError.sourceApplicationUnavailable(source.title)
         }
-        let exactProcess = content.applications.filter { $0.processID == processID }
-        let bundleMatches = content.applications.filter {
-            !bundleIdentifier.isEmpty && $0.bundleIdentifier == bundleIdentifier
-        }
-        let matchingApplications = !exactProcess.isEmpty
-            ? exactProcess
-            : (bundleMatches.count == 1 ? bundleMatches : [])
-        guard !matchingApplications.isEmpty else {
-            throw AudioCaptureError.sourceApplicationUnavailable(source.title)
-        }
-
-        let matchingPIDs = Set(matchingApplications.map(\.processID))
-        let matchingWindows = content.windows.filter { window in
-            guard let application = window.owningApplication else { return false }
-            return matchingPIDs.contains(application.processID)
-        }
-        let display = bestDisplay(for: matchingWindows, displays: content.displays)
-
-        return SCContentFilter(
-            display: display,
-            including: matchingApplications,
-            exceptingWindows: []
-        )
     }
 
-    private static func bestDisplay(for windows: [SCWindow], displays: [SCDisplay]) -> SCDisplay {
-        guard let firstDisplay = displays.first else {
-            preconditionFailure("At least one display is required")
+    private static func captureError(
+        from failure: CoreAudioProcessTap.CaptureFailure,
+        source: AudioSourceOption
+    ) -> AudioCaptureError {
+        switch failure.kind {
+        case .processNotFound:
+            return .sourceApplicationUnavailable(source.title)
+        case .permissionDenied, .unsupported:
+            return .systemAudioUnavailable
+        default:
+            return .captureConfigurationFailed(failure.localizedDescription)
         }
-        guard let firstWindow = windows.first else { return firstDisplay }
-
-        return displays.max { left, right in
-            left.frame.intersection(firstWindow.frame).area
-                < right.frame.intersection(firstWindow.frame).area
-        } ?? firstDisplay
-    }
-
-    private static func microphoneDevices() -> [AVCaptureDevice] {
-        if #available(macOS 14.0, *) {
-            return AVCaptureDevice.DiscoverySession(
-                deviceTypes: [.microphone, .external],
-                mediaType: .audio,
-                position: .unspecified
-            ).devices
-        }
-
-        return AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInMicrophone, .externalUnknown],
-            mediaType: .audio,
-            position: .unspecified
-        ).devices
     }
 }
 
-private final class SystemAudioOutput: NSObject, SCStreamOutput, SCStreamDelegate {
+private final class CoreAudioTapOutput: @unchecked Sendable {
+    private struct FormatKey: Hashable {
+        let sampleRate: Double
+        let channelCount: Int
+    }
+
+    private let queue: DispatchQueue
     private let writer: SampleBufferAudioWriter
     private let timeline: CaptureTimeline
     private let activationGate: CaptureActivationGate
     private let liveAudioSink: LiveAudioSampleSink?
     private let onFailure: (Error) -> Void
+    private var formatDescriptions: [FormatKey: CMAudioFormatDescription] = [:]
+    private var hasReportedConversionFailure = false
 
     init(
+        queue: DispatchQueue,
         writer: SampleBufferAudioWriter,
         timeline: CaptureTimeline,
         activationGate: CaptureActivationGate,
         liveAudioSink: LiveAudioSampleSink?,
         onFailure: @escaping (Error) -> Void
     ) {
+        self.queue = queue
         self.writer = writer
         self.timeline = timeline
         self.activationGate = activationGate
@@ -576,24 +471,141 @@ private final class SystemAudioOutput: NSObject, SCStreamOutput, SCStreamDelegat
         self.onFailure = onFailure
     }
 
-    func stream(
-        _ stream: SCStream,
-        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-        of outputType: SCStreamOutputType
-    ) {
-        guard outputType == .audio,
-              sampleBuffer.isValid,
-              activationGate.isOpen else { return }
-        writer.append(sampleBuffer, sourceClock: stream.synchronizationClock)
-        offerToLiveSink(
-            sampleBuffer,
-            sourceClock: stream.synchronizationClock,
-            track: .incoming
-        )
+    func receive(_ batch: CoreAudioProcessTap.FrameBatch) {
+        // Check on the delivery thread as well as the serial conversion queue:
+        // packets produced before activation or after shutdown must never cross
+        // the shared call epoch merely because they waited in a queue.
+        guard activationGate.isOpen else { return }
+        queue.async { [weak self] in
+            guard let self, self.activationGate.isOpen else { return }
+            do {
+                let sampleBuffer = try self.makeSampleBuffer(from: batch)
+                self.writer.append(sampleBuffer, sourceClock: nil)
+                self.offerToLiveSink(
+                    sampleBuffer,
+                    sourceClock: nil,
+                    track: .incoming
+                )
+            } catch {
+                guard !self.hasReportedConversionFailure else { return }
+                self.hasReportedConversionFailure = true
+                self.onFailure(error)
+            }
+        }
     }
 
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
-        onFailure(error)
+    func receive(_ failure: CoreAudioProcessTap.CaptureFailure) {
+        queue.async { [weak self] in
+            self?.onFailure(failure)
+        }
+    }
+
+    private func makeSampleBuffer(
+        from batch: CoreAudioProcessTap.FrameBatch
+    ) throws -> CMSampleBuffer {
+        guard batch.frameCount > 0,
+              batch.channelCount > 0,
+              batch.sampleRate.isFinite,
+              batch.sampleRate > 0,
+              batch.samples.count == batch.frameCount * batch.channelCount else {
+            throw AudioCaptureError.captureConfigurationFailed(
+                "Core Audio вернул некорректный PCM-буфер"
+            )
+        }
+
+        let formatKey = FormatKey(
+            sampleRate: batch.sampleRate,
+            channelCount: batch.channelCount
+        )
+        let formatDescription: CMAudioFormatDescription
+        if let cached = formatDescriptions[formatKey] {
+            formatDescription = cached
+        } else {
+            var streamDescription = AudioStreamBasicDescription(
+                mSampleRate: batch.sampleRate,
+                mFormatID: kAudioFormatLinearPCM,
+                mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+                mBytesPerPacket: UInt32(batch.channelCount * MemoryLayout<Float>.size),
+                mFramesPerPacket: 1,
+                mBytesPerFrame: UInt32(batch.channelCount * MemoryLayout<Float>.size),
+                mChannelsPerFrame: UInt32(batch.channelCount),
+                mBitsPerChannel: UInt32(MemoryLayout<Float>.size * 8),
+                mReserved: 0
+            )
+            var createdDescription: CMAudioFormatDescription?
+            let status = CMAudioFormatDescriptionCreate(
+                allocator: kCFAllocatorDefault,
+                asbd: &streamDescription,
+                layoutSize: 0,
+                layout: nil,
+                magicCookieSize: 0,
+                magicCookie: nil,
+                extensions: nil,
+                formatDescriptionOut: &createdDescription
+            )
+            guard status == noErr, let createdDescription else {
+                throw AudioCaptureError.captureConfigurationFailed(
+                    "не удалось описать формат системного аудио (\(status))"
+                )
+            }
+            formatDescriptions[formatKey] = createdDescription
+            formatDescription = createdDescription
+        }
+
+        let byteCount = batch.samples.count * MemoryLayout<Float>.size
+        var blockBuffer: CMBlockBuffer?
+        var status = CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: nil,
+            blockLength: byteCount,
+            blockAllocator: kCFAllocatorDefault,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: byteCount,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        )
+        guard status == kCMBlockBufferNoErr, let blockBuffer else {
+            throw AudioCaptureError.captureConfigurationFailed(
+                "не удалось выделить буфер системного аудио (\(status))"
+            )
+        }
+        status = batch.samples.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else {
+                return OSStatus(kCMBlockBufferBadPointerParameterErr)
+            }
+            return CMBlockBufferReplaceDataBytes(
+                with: baseAddress,
+                blockBuffer: blockBuffer,
+                offsetIntoDestination: 0,
+                dataLength: byteCount
+            )
+        }
+        guard status == kCMBlockBufferNoErr else {
+            throw AudioCaptureError.captureConfigurationFailed(
+                "не удалось скопировать системное аудио (\(status))"
+            )
+        }
+
+        let presentationTimeStamp = batch.hostTime == 0
+            ? CMClockGetTime(CMClockGetHostTimeClock())
+            : CMClockMakeHostTimeFromSystemUnits(batch.hostTime)
+        var sampleBuffer: CMSampleBuffer?
+        status = CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: blockBuffer,
+            formatDescription: formatDescription,
+            sampleCount: CMItemCount(batch.frameCount),
+            presentationTimeStamp: presentationTimeStamp,
+            packetDescriptions: nil,
+            sampleBufferOut: &sampleBuffer
+        )
+        guard status == noErr, let sampleBuffer, sampleBuffer.isValid else {
+            throw AudioCaptureError.captureConfigurationFailed(
+                "не удалось собрать системный аудиобуфер (\(status))"
+            )
+        }
+        return sampleBuffer
     }
 
     private func offerToLiveSink(

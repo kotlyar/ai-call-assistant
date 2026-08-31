@@ -5,14 +5,24 @@ import PackageDescription
 let package = Package(
     name: "Callya",
     platforms: [
-        .macOS(.v13)
+        .macOS("14.2")
     ],
     products: [
         .executable(name: "AICallAssistant", targets: ["AICallAssistant"])
     ],
     targets: [
+        .target(
+            name: "CoreAudioTapCapture",
+            path: "Sources/CoreAudioTapCapture",
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("Foundation")
+            ]
+        ),
         .executableTarget(
             name: "AICallAssistant",
+            dependencies: ["CoreAudioTapCapture"],
             path: "Sources/AICallAssistant"
         ),
         .testTarget(

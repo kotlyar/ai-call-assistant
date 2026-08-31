@@ -149,7 +149,7 @@ struct RecordingTranscriptionMetadata: Codable, Equatable, Sendable {
     var outgoingLiveAudioMetrics: LiveAudioTrackMetrics? = nil
 }
 
-struct Recording: Identifiable, Codable, Equatable {
+struct Recording: Identifiable, Codable, Equatable, Sendable {
     var id: UUID
     var title: String
     var startedAt: Date

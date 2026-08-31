@@ -1,6 +1,5 @@
 import AppKit
 import AVFoundation
-import CoreGraphics
 import Foundation
 
 enum AudioPermissionKind: Equatable, Sendable {
@@ -32,20 +31,23 @@ protocol AudioPermissionService {
 
 @MainActor
 final class SystemAudioPermissionService: AudioPermissionService {
-    private let preflightSystemAudioAccess: () -> Bool
-    private let performSystemAudioRequest: () -> Bool
+    typealias SystemAudioAccessProbe = @MainActor () async -> AudioPermissionStatus
+    typealias SettingsURLOpener = @MainActor (URL) -> Void
+
+    private let performSystemAudioProbe: SystemAudioAccessProbe
+    private let settingsURLOpener: SettingsURLOpener
     private var lastSystemAudioRequestStatus: AudioPermissionStatus?
 
     init(
-        preflightSystemAudioAccess: @escaping () -> Bool = {
-            CGPreflightScreenCaptureAccess()
+        systemAudioAccessProbe: @escaping SystemAudioAccessProbe = {
+            await SystemAudioPermissionService.probeCoreAudioAccess()
         },
-        requestSystemAudioAccess: @escaping () -> Bool = {
-            CGRequestScreenCaptureAccess()
+        settingsURLOpener: @escaping SettingsURLOpener = { url in
+            NSWorkspace.shared.open(url)
         }
     ) {
-        self.preflightSystemAudioAccess = preflightSystemAudioAccess
-        performSystemAudioRequest = requestSystemAudioAccess
+        performSystemAudioProbe = systemAudioAccessProbe
+        self.settingsURLOpener = settingsURLOpener
     }
 
     func currentSnapshot() -> AudioPermissionSnapshot {
@@ -60,7 +62,7 @@ final class SystemAudioPermissionService: AudioPermissionService {
         case .microphone:
             return await requestMicrophoneAccess()
         case .systemAudio:
-            return requestSystemAudioAccess()
+            return await requestSystemAudioAccess()
         }
     }
 
@@ -70,13 +72,13 @@ final class SystemAudioPermissionService: AudioPermissionService {
         case .microphone:
             anchor = "Privacy_Microphone"
         case .systemAudio:
-            anchor = "Privacy_ScreenCapture"
+            anchor = "Privacy_AudioCapture"
         }
 
         guard let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)"
         ) else { return }
-        NSWorkspace.shared.open(url)
+        settingsURLOpener(url)
     }
 
     private var microphoneStatus: AudioPermissionStatus {
@@ -93,14 +95,9 @@ final class SystemAudioPermissionService: AudioPermissionService {
     }
 
     private var systemAudioStatus: AudioPermissionStatus {
-        if preflightSystemAudioAccess() {
-            lastSystemAudioRequestStatus = .authorized
-            return .authorized
-        }
-
-        // CoreGraphics has no public denied/not-determined status. Persisting
-        // our own answer becomes stale when a development build's signing
-        // identity changes and can make the permission impossible to retry.
+        // Core Audio has no public preflight API for process taps. Keep the
+        // result only for this process and probe again after the next launch,
+        // so a change in System Settings can never become permanently stale.
         return lastSystemAudioRequestStatus ?? .notDetermined
     }
 
@@ -120,16 +117,24 @@ final class SystemAudioPermissionService: AudioPermissionService {
         }
     }
 
-    private func requestSystemAudioAccess() -> AudioPermissionStatus {
-        if preflightSystemAudioAccess() {
-            lastSystemAudioRequestStatus = .authorized
-            return .authorized
+    private func requestSystemAudioAccess() async -> AudioPermissionStatus {
+        let status = await performSystemAudioProbe()
+        if status != .notDetermined {
+            lastSystemAudioRequestStatus = status
         }
-
-        let status: AudioPermissionStatus = performSystemAudioRequest()
-            ? .authorized
-            : .denied
-        lastSystemAudioRequestStatus = status
         return status
+    }
+
+    private static func probeCoreAudioAccess() async -> AudioPermissionStatus {
+        switch await CoreAudioProcessTap.probePermission() {
+        case .available:
+            return .authorized
+        case .denied:
+            return .denied
+        case .unsupported, .failed:
+            // Unsupported or transient HAL failures are not evidence that the
+            // user denied access. Keep the state retryable.
+            return .notDetermined
+        }
     }
 }

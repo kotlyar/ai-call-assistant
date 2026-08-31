@@ -87,7 +87,7 @@ final class CapturedAudioFrame: @unchecked Sendable {
     }
 }
 
-/// `offer` is called directly from ScreenCaptureKit/AVFoundation callbacks and
+/// `offer` is called directly from Core Audio/AVFoundation callbacks and
 /// must return immediately. Implementations own all backpressure and dropping.
 protocol LiveAudioSampleSink: AnyObject, Sendable {
     func offer(_ frame: CapturedAudioFrame)

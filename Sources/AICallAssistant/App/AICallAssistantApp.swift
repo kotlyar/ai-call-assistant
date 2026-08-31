@@ -16,12 +16,18 @@ struct AICallAssistantApp: App {
         _model = StateObject(
             wrappedValue: AppModel(
                 openAISettings: settings,
+                loadsPersistedStateInBackground: !isUISnapshot,
                 contexts: isUISnapshot ? [] : nil,
                 recordings: isUISnapshot ? [] : nil
             )
         )
 #else
-        _model = StateObject(wrappedValue: AppModel(openAISettings: settings))
+        _model = StateObject(
+            wrappedValue: AppModel(
+                openAISettings: settings,
+                loadsPersistedStateInBackground: true
+            )
+        )
 #endif
     }
 

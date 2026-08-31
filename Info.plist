@@ -19,19 +19,17 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.2.0</string>
+    <string>0.2.2</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>5</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>14.2</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Callya показывает уровень микрофона перед звонком и записывает ваш голос после начала звонка.</string>
-	<key>NSScreenCaptureUsageDescription</key>
-	<string>Callya показывает уровень выбранного приложения или системного звука перед звонком и записывает голос собеседника после начала звонка.</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Callya проверяет уровень выбранного системного звука перед звонком и записывает его только после начала звонка.</string>
+	<string>Callya получает звук выбранного приложения или системы для транскрибации звонка.</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
 </dict>

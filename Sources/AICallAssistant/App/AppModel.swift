@@ -7,6 +7,35 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
+    private enum DeferredContextMutation {
+        case upsert(CallContext)
+        case delete(UUID)
+        case setSelected(id: UUID, isSelected: Bool)
+        case setAllSelected(Bool)
+
+        func apply(to contexts: inout [CallContext]) {
+            switch self {
+            case .upsert(let context):
+                if let index = contexts.firstIndex(where: { $0.id == context.id }) {
+                    contexts[index] = context
+                } else {
+                    contexts.append(context)
+                }
+            case .delete(let id):
+                contexts.removeAll { $0.id == id }
+            case .setSelected(let id, let isSelected):
+                guard let index = contexts.firstIndex(where: { $0.id == id }) else {
+                    return
+                }
+                contexts[index].isSelected = isSelected
+            case .setAllSelected(let isSelected):
+                for index in contexts.indices {
+                    contexts[index].isSelected = isSelected
+                }
+            }
+        }
+    }
+
     @Published var screen: AppScreen = .setup
     @Published var incomingSource: AudioSourceOption
     @Published var outgoingSource: AudioSourceOption
@@ -47,10 +76,13 @@ final class AppModel: ObservableObject {
     private let engine: CallEngine
     private let transcriptService: TranscriptFileService
     private let audioCaptureService: AudioCaptureService
+    private let audioSourceDiscoveryService: AudioSourceDiscoveryService
     private let audioPlaybackService: AudioPlaybackService
     private let audioPermissionService: AudioPermissionService
     private let recordingStorage: RecordingStorageService
+    private let recordingLoader: @Sendable () throws -> [Recording]
     private let contextLibraryStore: ContextLibraryStore
+    private let contextLibraryLoader: @Sendable () throws -> [CallContext]
     private let contextLibraryWriter: ContextLibraryWriter
     private let contextFileTextExtractor: any ContextFileTextExtracting
     private let realtimeCoordinatorFactory: @Sendable (
@@ -65,6 +97,7 @@ final class AppModel: ObservableObject {
     private var activeCallStartedAt: Date?
     private var activeCallFolderName: String?
     private var activeCallID: UUID?
+    private var callIDsCreatedThisLaunch: Set<UUID> = []
     private var activeConfiguration: GuidanceConfigurationSnapshot?
     private var activeContextStore: ConversationContextStore?
     private var activeLiveTranscriptJournal: LiveTranscriptJournal?
@@ -82,10 +115,18 @@ final class AppModel: ObservableObject {
     private var contextPersistenceRevision: Int64 = 0
     private var contextsNeedPersistence = false
     private var contextLibraryNeedsRecoveryBackup = false
+    private var isPersistedContextLoadPending = false
+    private var deferredContextMutations: [DeferredContextMutation] = []
+    private var persistedContextLoadWaiters: [CheckedContinuation<Void, Never>] = []
     private var reconciliationTasks: [UUID: Task<Void, Never>] = [:]
     private var finalAnalysisTasks: [UUID: Task<Void, Never>] = [:]
+    private var preparingReconciliationIDs: Set<UUID> = []
+    private var preparingFinalAnalysisIDs: Set<UUID> = []
     private var settingsCredentialCancellable: AnyCancellable?
     private var audioDeviceObservers: [NSObjectProtocol] = []
+    private var isPostCallMaintenanceRunning = false
+    private var activePostCallMaintenanceIncludesCredentialBlocked = false
+    private var pendingPostCallMaintenanceIncludesCredentialBlocked = false
 
     private static let audioOnboardingSeenKey = "com.aicallassistant.onboarding.audio-permissions-seen"
 
@@ -93,10 +134,13 @@ final class AppModel: ObservableObject {
         engine: CallEngine? = nil,
         transcriptService: TranscriptFileService = TranscriptFileService(),
         audioCaptureService: AudioCaptureService? = nil,
+        audioSourceDiscoveryService: AudioSourceDiscoveryService? = nil,
         audioPlaybackService: AudioPlaybackService? = nil,
         audioPermissionService: AudioPermissionService? = nil,
         recordingStorage: RecordingStorageService = RecordingStorageService(),
+        recordingLoader: (@Sendable () throws -> [Recording])? = nil,
         contextLibraryStore: ContextLibraryStore = ContextLibraryStore(),
+        contextLibraryLoader: (@Sendable () throws -> [CallContext])? = nil,
         openAISettings: OpenAISettingsStore? = nil,
         contextFileTextExtractor: any ContextFileTextExtracting = OpenAIContextFileTextExtractor(),
         realtimeCoordinatorFactory: @escaping @Sendable (
@@ -122,10 +166,21 @@ final class AppModel: ObservableObject {
             SecretStoreReconciliationCredentialProvider()
         },
         userDefaults: UserDefaults = .standard,
+        loadsPersistedStateInBackground: Bool = false,
         contexts: [CallContext]? = nil,
         recordings: [Recording]? = nil
     ) {
+        let shouldLoadContextsInBackground = loadsPersistedStateInBackground && contexts == nil
+        let shouldLoadRecordingsInBackground = loadsPersistedStateInBackground && recordings == nil
+        let resolvedContextLibraryLoader: @Sendable () throws -> [CallContext] =
+            contextLibraryLoader ?? { try contextLibraryStore.load() }
+        let resolvedRecordingLoader: @Sendable () throws -> [Recording] =
+            recordingLoader ?? { try recordingStorage.loadAll() }
         let captureService = audioCaptureService ?? RealAudioCaptureService()
+        let sourceDiscoveryService = audioSourceDiscoveryService
+            ?? (audioCaptureService == nil
+                ? CoreAudioSourceDiscoveryService()
+                : CaptureServiceSourceDiscoveryAdapter(captureService: captureService))
         let playbackService = audioPlaybackService ?? RealAudioPlaybackService()
         let permissionService = audioPermissionService
             ?? SystemAudioPermissionService()
@@ -138,10 +193,13 @@ final class AppModel: ObservableObject {
         self.engine = engine ?? LiveCallEngine()
         self.transcriptService = transcriptService
         self.audioCaptureService = captureService
+        self.audioSourceDiscoveryService = sourceDiscoveryService
         self.audioPlaybackService = playbackService
         self.audioPermissionService = permissionService
         self.recordingStorage = recordingStorage
+        self.recordingLoader = resolvedRecordingLoader
         self.contextLibraryStore = contextLibraryStore
+        self.contextLibraryLoader = resolvedContextLibraryLoader
         contextLibraryWriter = ContextLibraryWriter(store: contextLibraryStore)
         self.contextFileTextExtractor = contextFileTextExtractor
         self.realtimeCoordinatorFactory = realtimeCoordinatorFactory
@@ -164,9 +222,12 @@ final class AppModel: ObservableObject {
             self.contexts = contexts
             contextPersistenceRevision = 1
             contextsNeedPersistence = true
+        } else if shouldLoadContextsInBackground {
+            self.contexts = []
+            isPersistedContextLoadPending = true
         } else {
             do {
-                self.contexts = try contextLibraryStore.load()
+                self.contexts = try resolvedContextLibraryLoader()
             } catch {
                 // Keep unreadable/future data intact. The first explicit edit
                 // creates a recovery copy before replacing the live library.
@@ -174,7 +235,13 @@ final class AppModel: ObservableObject {
                 contextLibraryNeedsRecoveryBackup = true
             }
         }
-        self.recordings = recordings ?? ((try? recordingStorage.loadAll()) ?? [])
+        if let recordings {
+            self.recordings = recordings
+        } else if shouldLoadRecordingsInBackground {
+            self.recordings = []
+        } else {
+            self.recordings = (try? resolvedRecordingLoader()) ?? []
+        }
         storagePath = recordingStorage.rootURL.path
         selectedRecordingID = self.recordings.first?.id
 
@@ -229,10 +296,63 @@ final class AppModel: ObservableObject {
         }
         if performsStartupMaintenance {
             Task { @MainActor [weak self] in
+                await self?.loadPersistedStateInBackground(
+                    contexts: shouldLoadContextsInBackground,
+                    recordings: shouldLoadRecordingsInBackground
+                )
                 try? await self?.openAISettings.refreshCredentialState()
                 await self?.resumePendingPostCallProcessing(
                     includeCredentialBlocked: true
                 )
+            }
+        }
+    }
+
+    private func loadPersistedStateInBackground(
+        contexts shouldLoadContexts: Bool,
+        recordings shouldLoadRecordings: Bool
+    ) async {
+        guard shouldLoadContexts || shouldLoadRecordings else { return }
+
+        let contextLoader = contextLibraryLoader
+        let contextLoadTask: Task<([CallContext]?, Bool), Never>? = shouldLoadContexts
+            ? Task.detached(priority: .userInitiated) {
+                do {
+                    return (try contextLoader(), false)
+                } catch {
+                    return (nil, true)
+                }
+            }
+            : nil
+        let loadRecordings = recordingLoader
+        let recordingLoadTask: Task<[Recording]?, Never>? = shouldLoadRecordings
+            ? Task.detached(priority: .utility) {
+                try? loadRecordings()
+            }
+            : nil
+
+        if let contextLoadTask {
+            let loadedContexts = await contextLoadTask.value
+            completePersistedContextLoad(
+                contexts: loadedContexts.0,
+                didFail: loadedContexts.1
+            )
+        }
+
+        if let recordingLoadTask,
+           let persistedRecordings = await recordingLoadTask.value {
+            let existingIDs = Set(recordings.map(\.id))
+            recordings.append(contentsOf: persistedRecordings.filter {
+                !existingIDs.contains($0.id)
+            })
+            recordings.sort {
+                if $0.startedAt == $1.startedAt {
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+                return $0.startedAt > $1.startedAt
+            }
+            if selectedRecordingID == nil {
+                selectedRecordingID = recordings.first?.id
             }
         }
     }
@@ -247,6 +367,12 @@ final class AppModel: ObservableObject {
     func toggleContext(_ context: CallContext) {
         guard let index = contexts.firstIndex(where: { $0.id == context.id }) else { return }
         contexts[index].isSelected.toggle()
+        deferContextMutationIfNeeded(
+            .setSelected(
+                id: contexts[index].id,
+                isSelected: contexts[index].isSelected
+            )
+        )
         persistContextsInBackground()
     }
 
@@ -254,6 +380,7 @@ final class AppModel: ObservableObject {
         for index in contexts.indices {
             contexts[index].isSelected = true
         }
+        deferContextMutationIfNeeded(.setAllSelected(true))
         persistContextsInBackground()
     }
 
@@ -261,6 +388,7 @@ final class AppModel: ObservableObject {
         for index in contexts.indices {
             contexts[index].isSelected = false
         }
+        deferContextMutationIfNeeded(.setAllSelected(false))
         persistContextsInBackground()
     }
 
@@ -317,16 +445,17 @@ final class AppModel: ObservableObject {
             contexts[index].title = title
             contexts[index].body = body
             contexts[index].attachments = attachments
+            deferContextMutationIfNeeded(.upsert(contexts[index]))
             showToast("Контекст сохранён")
         } else {
-            contexts.append(
-                CallContext(
-                    title: title,
-                    body: body,
-                    isSelected: true,
-                    attachments: attachments
-                )
+            let context = CallContext(
+                title: title,
+                body: body,
+                isSelected: true,
+                attachments: attachments
             )
+            contexts.append(context)
+            deferContextMutationIfNeeded(.upsert(context))
             showToast("Контекст добавлен и выбран")
         }
         self.editingContext = nil
@@ -335,6 +464,7 @@ final class AppModel: ObservableObject {
 
     func deleteContext(_ context: CallContext) {
         contexts.removeAll { $0.id == context.id }
+        deferContextMutationIfNeeded(.delete(context.id))
         persistContextsInBackground()
         showToast("Контекст удалён")
     }
@@ -356,6 +486,20 @@ final class AppModel: ObservableObject {
         audioPermissions = audioPermissionService.currentSnapshot()
     }
 
+    func recheckAudioPermissions() {
+        refreshAudioPermissions()
+        guard requestingAudioPermission == nil else { return }
+
+        Task { @MainActor in
+            requestingAudioPermission = .systemAudio
+            _ = await probeSystemAudioPermission()
+            requestingAudioPermission = nil
+            if audioPermissions.allGranted {
+                await refreshAudioSources()
+            }
+        }
+    }
+
     func requestAudioPermission(_ kind: AudioPermissionKind) async {
         guard requestingAudioPermission == nil else { return }
         requestingAudioPermission = kind
@@ -369,8 +513,7 @@ final class AppModel: ObservableObject {
         )
 
         if kind == .systemAudio, requestedStatus == .denied {
-            // On current macOS versions the first ScreenCapture request adds
-            // the app to System Settings but does not show an Allow dialog.
+            // Core Audio taps use the dedicated System Audio Recording pane.
             audioPermissionService.openSettings(for: .systemAudio)
         }
 
@@ -383,14 +526,35 @@ final class AppModel: ObservableObject {
         audioPermissionService.openSettings(for: kind)
     }
 
+    @discardableResult
+    private func probeSystemAudioPermission() async -> AudioPermissionStatus {
+        let requestedStatus = await audioPermissionService.request(.systemAudio)
+        let refreshed = audioPermissionService.currentSnapshot()
+        audioPermissions = AudioPermissionSnapshot(
+            microphone: refreshed.microphone,
+            systemAudio: requestedStatus
+        )
+        return requestedStatus
+    }
+
     func applicationDidBecomeActive() {
         refreshAudioPermissions()
-        if audioPermissions.allGranted, callState != .running {
-            Task { await refreshAudioSources() }
+        guard callState != .running else { return }
+
+        Task { @MainActor in
+            if audioPermissions.microphone == .authorized,
+               audioPermissions.systemAudio != .authorized,
+               userDefaults.bool(forKey: Self.audioOnboardingSeenKey) {
+                _ = await probeSystemAudioPermission()
+            }
+            if audioPermissions.allGranted {
+                await refreshAudioSources()
+            }
         }
     }
 
     func prepareForTermination() async -> Bool {
+        await waitForPersistedContextsIfNeeded()
         guard await persistContextsForTermination() else { return false }
         stopPlayback()
 
@@ -424,6 +588,11 @@ final class AppModel: ObservableObject {
     func refreshAudioSources() async {
         guard !isDiscoveringAudioSources, callState != .running else { return }
         refreshAudioPermissions()
+        if audioPermissions.microphone == .authorized,
+           audioPermissions.systemAudio == .notDetermined,
+           !isAudioPermissionsPresented {
+            _ = await probeSystemAudioPermission()
+        }
         guard audioPermissions.allGranted else {
             incomingSources = [.systemAudio]
             outgoingSources = []
@@ -434,7 +603,7 @@ final class AppModel: ObservableObject {
         defer { isDiscoveringAudioSources = false }
 
         do {
-            let catalog = try await audioCaptureService.discoverSources()
+            let catalog = try await audioSourceDiscoveryService.discoverSources()
             incomingSources = catalog.incoming
             outgoingSources = catalog.microphones
 
@@ -455,8 +624,13 @@ final class AppModel: ObservableObject {
 
     @discardableResult
     func startCall() async -> Bool {
+        await waitForPersistedContextsIfNeeded()
         guard callState != .running, !isPreparingAudio, !isFinalizingAudio else { return false }
         refreshAudioPermissions()
+        if audioPermissions.microphone == .authorized,
+           audioPermissions.systemAudio != .authorized {
+            _ = await probeSystemAudioPermission()
+        }
         guard audioPermissions.allGranted else {
             audioSetupError = "Для записи нужны доступы к микрофону и системному звуку."
             isAudioPermissionsPresented = true
@@ -479,6 +653,11 @@ final class AppModel: ObservableObject {
 
         let startedAt = Date()
         let callID = UUID()
+        // A maintenance scan may retain an older .draft/.capturing snapshot
+        // until after this call finishes and activeCallID is cleared. Keep
+        // launch ownership for the process lifetime so that stale recovery can
+        // never overwrite a call finalized by this AppModel.
+        callIDsCreatedThisLaunch.insert(callID)
         let folderName = Self.folderName(for: startedAt)
         let folderURL = recordingStorage.rootURL.appendingPathComponent(folderName, isDirectory: true)
         let configuration = GuidanceConfigurationSnapshot.frozen(
@@ -810,7 +989,7 @@ final class AppModel: ObservableObject {
             try recordingStorage.save(recording)
             _ = try? transcriptService.updateManagedTranscriptFile(for: recording)
             publishSavedRecording(recording)
-            enqueuePostCallProcessing(recording)
+            await enqueuePostCallProcessing(recording)
 
             if let liveGuidanceCoordinator {
                 Task {
@@ -960,7 +1139,7 @@ final class AppModel: ObservableObject {
             return
         }
         guard reconciliationTasks[recording.id] == nil else { return }
-        enqueuePostCallProcessing(recording, retryFailed: true)
+        await enqueuePostCallProcessing(recording, retryFailed: true)
     }
 
     private func synchronizeEngineState() {
@@ -1195,19 +1374,23 @@ final class AppModel: ObservableObject {
     private func enqueuePostCallProcessing(
         _ original: Recording,
         retryFailed: Bool = false
-    ) {
+    ) async {
         guard reconciliationTasks[original.id] == nil,
+              !preparingReconciliationIDs.contains(original.id),
               let metadata = original.transcription else { return }
         if metadata.reconciliationStatus == .complete
             || metadata.reconciliationStatus == .incomplete {
             return
         }
 
+        preparingReconciliationIDs.insert(original.id)
+        defer { preparingReconciliationIDs.remove(original.id) }
+
         var running = original
         running.transcription?.reconciliationStatus = .running
         running.transcription?.reconciliationUpdatedAt = Date()
         running.transcription?.lastErrorCode = nil
-        _ = try? recordingStorage.save(running)
+        await saveRecordingOffMain(running)
         upsertRecording(running)
 
         let processor = RecordingReconciliationProcessor(
@@ -1220,16 +1403,16 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             defer { self.reconciliationTasks[recordingID] = nil }
             do {
-                let outcome = try await processor.process(
-                    recording: running,
-                    retryFailed: retryFailed
-                )
-                if outcome.canonicalCommit != nil {
-                    _ = try? self.transcriptService.updateManagedTranscriptFile(
-                        for: outcome.recording
+                let outcome = try await Task.detached(priority: .utility) {
+                    try await processor.process(
+                        recording: running,
+                        retryFailed: retryFailed
                     )
-                }
+                }.value
                 self.upsertRecording(outcome.recording)
+                if outcome.canonicalCommit != nil {
+                    await self.updateManagedTranscriptFileOffMain(for: outcome.recording)
+                }
                 if outcome.recording.transcription?.reconciliationStatus == .complete {
                     await self.enqueueFinalAnalysis(
                         outcome.recording,
@@ -1244,7 +1427,7 @@ final class AppModel: ObservableObject {
                 failed.transcription?.finalAnalysisStatus = .waitingForReconciliation
                 failed.transcription?.reconciliationUpdatedAt = Date()
                 failed.transcription?.lastErrorCode = "reconciliation_pipeline_failed"
-                _ = try? self.recordingStorage.save(failed)
+                await self.saveRecordingOffMain(failed)
                 self.upsertRecording(failed)
             }
         }
@@ -1256,6 +1439,7 @@ final class AppModel: ObservableObject {
         retryFailed: Bool = false
     ) async {
         guard finalAnalysisTasks[original.id] == nil,
+              !preparingFinalAnalysisIDs.contains(original.id),
               let metadata = original.transcription,
               metadata.reconciliationStatus == .complete,
               let canonicalRevision = metadata.canonicalRevision,
@@ -1272,17 +1456,23 @@ final class AppModel: ObservableObject {
             break
         }
 
+        preparingFinalAnalysisIDs.insert(original.id)
+        defer { preparingFinalAnalysisIDs.remove(original.id) }
+
         let reconciliation: ReconciliationStoredJob
         do {
             if let suppliedReconciliation {
                 reconciliation = suppliedReconciliation
             } else {
-                let folderURL = try recordingStorage.folderURL(for: original)
-                let store = try ReconciliationJobStore(
-                    callFolderURL: folderURL,
-                    callID: original.id
-                )
-                guard let persisted = await store.currentJob() else { return }
+                let storage = recordingStorage
+                guard let persisted = try await Task.detached(priority: .utility, operation: {
+                    let folderURL = try storage.folderURL(for: original)
+                    let store = try ReconciliationJobStore(
+                        callFolderURL: folderURL,
+                        callID: original.id
+                    )
+                    return await store.currentJob()
+                }).value else { return }
                 reconciliation = persisted
             }
         } catch {
@@ -1301,7 +1491,7 @@ final class AppModel: ObservableObject {
            ) {
             running.transcription?.finalAnalysisResultPointer = nil
         }
-        _ = try? recordingStorage.save(running)
+        await saveRecordingOffMain(running)
         upsertRecording(running)
 
         let processor = RecordingFinalAnalysisProcessor(
@@ -1314,11 +1504,13 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             defer { self.finalAnalysisTasks[recordingID] = nil }
             do {
-                let outcome = try await processor.process(
-                    recording: running,
-                    reconciliation: reconciliation,
-                    retryFailed: retryFailed
-                )
+                let outcome = try await Task.detached(priority: .utility) {
+                    try await processor.process(
+                        recording: running,
+                        reconciliation: reconciliation,
+                        retryFailed: retryFailed
+                    )
+                }.value
                 self.upsertRecording(outcome.recording)
             } catch is CancellationError {
                 return
@@ -1327,7 +1519,7 @@ final class AppModel: ObservableObject {
                 failed.transcription?.finalAnalysisStatus = .failed
                 failed.transcription?.finalAnalysisUpdatedAt = Date()
                 failed.transcription?.lastErrorCode = "final_analysis_pipeline_failed"
-                _ = try? self.recordingStorage.save(failed)
+                await self.saveRecordingOffMain(failed)
                 self.upsertRecording(failed)
             }
         }
@@ -1336,42 +1528,91 @@ final class AppModel: ObservableObject {
     private func resumePendingPostCallProcessing(
         includeCredentialBlocked: Bool = false
     ) async {
-        let current = (try? recordingStorage.loadAll()) ?? recordings
+        if isPostCallMaintenanceRunning {
+            pendingPostCallMaintenanceIncludesCredentialBlocked =
+                pendingPostCallMaintenanceIncludesCredentialBlocked
+                || (includeCredentialBlocked
+                    && !activePostCallMaintenanceIncludesCredentialBlocked)
+            return
+        }
+
+        isPostCallMaintenanceRunning = true
+        var shouldIncludeCredentialBlocked = includeCredentialBlocked
+        repeat {
+            activePostCallMaintenanceIncludesCredentialBlocked =
+                shouldIncludeCredentialBlocked
+            pendingPostCallMaintenanceIncludesCredentialBlocked = false
+            await performPendingPostCallProcessing(
+                includeCredentialBlocked: shouldIncludeCredentialBlocked
+            )
+            shouldIncludeCredentialBlocked =
+                pendingPostCallMaintenanceIncludesCredentialBlocked
+        } while shouldIncludeCredentialBlocked
+        activePostCallMaintenanceIncludesCredentialBlocked = false
+        isPostCallMaintenanceRunning = false
+    }
+
+    private func performPendingPostCallProcessing(
+        includeCredentialBlocked: Bool
+    ) async {
+        let loadRecordings = recordingLoader
+        let loaded = await Task.detached(priority: .utility) {
+            try? loadRecordings()
+        }.value
+        let current = loaded ?? recordings
         for original in current {
+            guard original.id != activeCallID else { continue }
+
             var recording = original
             if recording.transcription?.callState == .draft
                 || recording.transcription?.callState == .capturing {
+                // A scan can retain this stale state until after finishCall
+                // clears activeCallID. Calls owned by this launch are finalized
+                // and queued by finishCall, so only exclude them from crash
+                // recovery; their saved jobs may still resume below.
+                guard !callIDsCreatedThisLaunch.contains(recording.id) else {
+                    continue
+                }
                 recording = await recoverInterruptedRecording(recording)
-                _ = try? transcriptService.updateManagedTranscriptFile(for: recording)
                 upsertRecording(recording)
+                await updateManagedTranscriptFileOffMain(for: recording)
                 if recording.transcription?.reconciliationStatus == .pending {
-                    enqueuePostCallProcessing(recording)
+                    await enqueuePostCallProcessing(recording)
                 }
                 continue
             }
             guard let status = recording.transcription?.reconciliationStatus else { continue }
             switch status {
             case .pending, .running:
-                enqueuePostCallProcessing(recording)
+                await enqueuePostCallProcessing(recording)
             case .blockedByCredential where includeCredentialBlocked:
-                enqueuePostCallProcessing(recording)
+                await enqueuePostCallProcessing(recording)
             case .complete:
-                let repair = RecordingReconciliationProcessor(
-                    recordingStorage: recordingStorage,
-                    provider: fileTranscriptionProviderFactory(),
-                    credentialProvider: reconciliationCredentialProviderFactory()
-                )
-                if let repaired = try? repair.repairCanonicalPointerIfNeeded(recording) {
-                    recording = repaired
-                    _ = try? transcriptService.updateManagedTranscriptFile(for: recording)
-                    upsertRecording(recording)
+                // Completed recordings already carry their canonical turns in
+                // metadata. Only repair a clearly missing projection; doing a
+                // full canonical read for every completed call made cold launch
+                // depend on the entire Documents history.
+                if recording.turns.isEmpty,
+                   recording.transcription?.canonicalTranscriptFilename != nil {
+                    let repair = RecordingReconciliationProcessor(
+                        recordingStorage: recordingStorage,
+                        provider: fileTranscriptionProviderFactory(),
+                        credentialProvider: reconciliationCredentialProviderFactory()
+                    )
+                    if let repaired = try? await Task.detached(priority: .utility, operation: {
+                        try repair.repairCanonicalPointerIfNeeded(recording)
+                    }).value,
+                       repaired != recording {
+                        recording = repaired
+                        upsertRecording(recording)
+                        await updateManagedTranscriptFileOffMain(for: recording)
+                    }
                 }
                 let finalStatus = recording.transcription?.finalAnalysisStatus
                 let shouldResumeFinal = finalStatus == .pending
                     || finalStatus == .running
                     || finalStatus == .waitingForReconciliation
                     || (includeCredentialBlocked && finalStatus == .blockedByCredential)
-                    || finalStatus == .complete
                 if shouldResumeFinal {
                     await enqueueFinalAnalysis(recording)
                 }
@@ -1379,6 +1620,20 @@ final class AppModel: ObservableObject {
                 break
             }
         }
+    }
+
+    private func saveRecordingOffMain(_ recording: Recording) async {
+        let storage = recordingStorage
+        _ = try? await Task.detached(priority: .utility) {
+            try storage.save(recording)
+        }.value
+    }
+
+    private func updateManagedTranscriptFileOffMain(for recording: Recording) async {
+        let service = transcriptService
+        _ = try? await Task.detached(priority: .utility) {
+            try service.updateManagedTranscriptFile(for: recording)
+        }.value
     }
 
     private func recoverInterruptedRecording(_ original: Recording) async -> Recording {
@@ -1558,10 +1813,62 @@ final class AppModel: ObservableObject {
         _ = try? recordingStorage.save(recording)
     }
 
+    private func deferContextMutationIfNeeded(_ mutation: DeferredContextMutation) {
+        guard isPersistedContextLoadPending else { return }
+        deferredContextMutations.append(mutation)
+    }
+
+    private func completePersistedContextLoad(
+        contexts persistedContexts: [CallContext]?,
+        didFail: Bool
+    ) {
+        guard isPersistedContextLoadPending else { return }
+
+        if !didFail, var mergedContexts = persistedContexts {
+            for mutation in deferredContextMutations {
+                mutation.apply(to: &mergedContexts)
+            }
+            contexts = mergedContexts
+        } else {
+            // A local edit made while an unreadable library was loading must
+            // still preserve that file before the replacement is written.
+            contextLibraryNeedsRecoveryBackup = true
+        }
+
+        deferredContextMutations.removeAll()
+        isPersistedContextLoadPending = false
+
+        if contextsNeedPersistence {
+            scheduleContextPersistence()
+        }
+
+        let waiters = persistedContextLoadWaiters
+        persistedContextLoadWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func waitForPersistedContextsIfNeeded() async {
+        guard isPersistedContextLoadPending else { return }
+        await withCheckedContinuation { continuation in
+            if isPersistedContextLoadPending {
+                persistedContextLoadWaiters.append(continuation)
+            } else {
+                continuation.resume()
+            }
+        }
+    }
+
     private func persistContextsInBackground() {
         contextPersistenceRevision += 1
         contextsNeedPersistence = true
 
+        // Until the initial read finishes, `contexts` only contains edits made
+        // during this launch. Writing it now would replace the existing library.
+        guard !isPersistedContextLoadPending else { return }
+        scheduleContextPersistence()
+    }
+
+    private func scheduleContextPersistence() {
         let revision = contextPersistenceRevision
         let snapshot = contexts
         let writer = contextLibraryWriter

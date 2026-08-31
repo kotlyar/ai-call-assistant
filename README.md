@@ -4,7 +4,7 @@ Native macOS call copilot built with SwiftUI.
 
 The current version implements the end-to-end local capture and OpenAI workflow:
 
-- capture of either all system audio or a selected running application through ScreenCaptureKit;
+- capture of either all system audio or a selected audio process through Core Audio process taps;
 - recording from a real selected microphone through AVFoundation;
 - separate `incoming.m4a` and `outgoing.m4a` tracks plus a mixed `combined.m4a` file;
 - reusable call contexts with create, edit, delete, and per-call selection;
@@ -20,9 +20,9 @@ The reusable context library, including extracted attachment text and the curren
 
 ## Requirements
 
-- macOS 13 or newer
+- macOS 14.2 or newer
 - Swift 5.9 or newer
-- Xcode 15 or newer for IDE development
+- Xcode 15.1 or newer for IDE development
 
 ## Run the prototype
 
@@ -44,7 +44,7 @@ DMG if a messenger or cloud provider changes macOS bundle metadata during ZIP
 extraction.
 
 Without a configured certificate, the local bundle uses a stable ad-hoc
-designated requirement so ScreenCapture permission survives local rebuilds. For
+designated requirement so privacy permissions survive local rebuilds. For
 a durable development or release identity, run:
 
 ```bash
@@ -56,10 +56,12 @@ Distribution still requires Developer ID signing and notarization. Until the app
 has both, a trusted test user must try to open it once, then go to **System
 Settings → Privacy & Security**, scroll to **Security**, choose **Open Anyway**,
 and confirm. Keep a single copy in `/Applications` or `~/Applications`; changing
-copies in a cloud-backed build folder can leave stale ScreenCapture permission
+copies in a cloud-backed build folder can leave stale privacy permission
 records.
 
-On first launch, the app opens a permissions onboarding screen for Microphone and Screen & System Audio Recording. Each permission can be requested in place or opened directly in System Settings; the same screen remains available from the “Настроить доступы” button. If macOS requests a restart after granting screen capture access, quit and reopen the app bundle.
+On first launch, the app opens a permissions onboarding screen for Microphone and System Audio Recording. Each permission can be requested in place or opened directly in System Settings; the same screen remains available from the “Настроить доступы” button. Callya does not capture an image of the screen and does not require Screen Recording permission.
+
+While the setup screen is open, Callya monitors only the selected microphone. Apart from the brief Core Audio probe used to request or verify permission, sustained system-audio capture starts after **Начать звонок** and stops when the call ends. During a call macOS can show its system-audio privacy indicator, but Callya does not create a screen-sharing session or a **Currently Sharing** control.
 
 ## Recording files
 

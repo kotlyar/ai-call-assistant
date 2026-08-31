@@ -1,7 +1,7 @@
 import Foundation
 
-struct AudioSourceOption: Identifiable, Hashable {
-    enum Kind: Hashable {
+struct AudioSourceOption: Identifiable, Hashable, Sendable {
+    enum Kind: Hashable, Sendable {
         case systemAudio
         case application(bundleIdentifier: String, processID: Int32)
         case microphone(uniqueID: String)
@@ -102,7 +102,7 @@ enum AudioCaptureError: LocalizedError, Equatable {
         case let .microphoneUnavailable(name):
             return "Микрофон «\(name)» недоступен. Подключите его или выберите другой источник."
         case .systemAudioUnavailable:
-            return "Не удалось получить системный звук. Разрешите запись экрана и системного аудио в настройках macOS."
+            return "Не удалось получить системный звук. Разрешите запись системного аудио в настройках macOS."
         case let .sourceApplicationUnavailable(name):
             return "Источник «\(name)» не найден. Откройте приложение или окно звонка и попробуйте снова."
         case let .captureConfigurationFailed(message):
