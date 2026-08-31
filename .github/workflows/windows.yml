@@ -10,9 +10,14 @@ on:
       - "windows/**"
       - ".github/workflows/windows.yml"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing GitHub Release tag to receive the Windows package"
+        required: false
+        type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -44,6 +49,17 @@ jobs:
           $matches = Get-ChildItem "windows/artifacts/publish/win-x64" -File -Recurse |
             Select-String -Pattern "sk-proj-", "sk-svcacct-", "OPENAI_API_KEY=" -SimpleMatch
           if ($matches) { throw "Possible API credential found in publish output." }
+
+      - name: Upload Windows package to GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ inputs.release_tag }}" `
+            "windows/artifacts/package/Callya-Windows-win-x64.zip" `
+            "windows/artifacts/package/Callya-Windows-win-x64.zip.sha256" `
+            --clobber
 
       - name: Upload Windows package
         # Storage quota is account-wide and independent of whether this commit
