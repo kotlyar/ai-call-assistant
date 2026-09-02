@@ -1,6 +1,34 @@
-# Callya
+<p align="center">
+  <img src="website/public/callya-icon.png" width="104" alt="Callya icon">
+</p>
 
-Native macOS call copilot built with SwiftUI.
+<h1 align="center">Callya</h1>
+
+<p align="center">
+  Open-source native AI copilot for live calls on macOS and Windows.<br>
+  It hears both sides, keeps the context, and suggests what to say next.
+</p>
+
+<p align="center">
+  <a href="https://callya.kotlyar.chatgpt.site"><strong>Website</strong></a>
+  ·
+  <a href="https://github.com/kotlyar/ai-call-assistant/releases/latest/download/Callya.dmg"><strong>Download for macOS</strong></a>
+  ·
+  <a href="https://github.com/kotlyar/ai-call-assistant/releases/latest/download/Callya-Windows-win-x64.zip"><strong>Download for Windows</strong></a>
+  ·
+  <a href="https://github.com/kotlyar/ai-call-assistant/releases/latest">Release notes</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/kotlyar/ai-call-assistant/actions/workflows/windows.yml"><img alt="Windows build" src="https://github.com/kotlyar/ai-call-assistant/actions/workflows/windows.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-6f61d9.svg"></a>
+  <img alt="macOS 14.2+" src="https://img.shields.io/badge/macOS-14.2%2B-18181b.svg">
+  <img alt="Windows 11" src="https://img.shields.io/badge/Windows-11-18181b.svg">
+</p>
+
+![Callya live assistant showing a contextual answer during a call](website/public/product/live-assistant.jpg)
+
+## What Callya does
 
 The current version implements the end-to-end local capture and OpenAI workflow:
 
@@ -13,6 +41,21 @@ The current version implements the end-to-end local capture and OpenAI workflow:
 - a durable post-call reconciliation pass over both raw recordings;
 - final post-call question/answer cards built only from a fully reconciled conversation;
 - a persistent recordings library with playback, separate audio export options, managed transcripts, processing states, and retry support.
+
+## Downloads
+
+| Platform | Build | Requirements |
+| --- | --- | --- |
+| macOS | [Callya.dmg](https://github.com/kotlyar/ai-call-assistant/releases/latest/download/Callya.dmg) · [ZIP](https://github.com/kotlyar/ai-call-assistant/releases/latest/download/Callya.zip) | macOS 14.2+, Apple Silicon or Intel |
+| Windows | [Callya-Windows-win-x64.zip](https://github.com/kotlyar/ai-call-assistant/releases/latest/download/Callya-Windows-win-x64.zip) · [SHA-256](https://github.com/kotlyar/ai-call-assistant/releases/latest/download/Callya-Windows-win-x64.zip.sha256) | Windows 11 x64 |
+
+The current macOS build is ad-hoc signed and not notarized; Gatekeeper may require **Privacy & Security → Open Anyway** on first launch. The Windows build is not code-signed, so SmartScreen may show an unknown-publisher warning. Build artifacts are also available on the [latest release page](https://github.com/kotlyar/ai-call-assistant/releases/latest).
+
+## OpenAI API cost
+
+Callya is free. You pay OpenAI directly through your own Platform API key. At prices current on 2026-09-02, a typical one-hour call costs approximately **$2.80–$3.30**: $2.04 for two live transcription tracks, $0.54 for post-call transcription of both tracks, and roughly $0.20–$0.70 for contextual answers and final analysis. The last part varies with the number of questions, transcript length, selected context, and response model. For a complete one-hour workflow, set the per-call limit to at least $3.50.
+
+See the official pricing for [`gpt-live-transcribe`](https://developers.openai.com/api/docs/models/gpt-live-transcribe), [`gpt-transcribe`](https://developers.openai.com/api/docs/models/gpt-transcribe), and [`gpt-5.6-terra`](https://developers.openai.com/api/docs/models/gpt-5.6-terra).
 
 The app uses an OpenAI Platform API key. A ChatGPT or Codex subscription is not an API credential and does not cover API usage. Enter the key once in Settings; it is stored at `~/Library/Application Support/com.aicallassistant.desktop/Secrets/openai-api-key` and reused on later launches. The app does not use Keychain or ask for your macOS password. The directory is restricted to `0700` and the file to `0600`, but the key is not separately encrypted: other processes running as the same macOS user, root, snapshots, or some backup tools may still read it. This convenience mode is therefore weaker than Keychain. Non-secret model, language, response-length, and per-call spending settings are also stored locally. Without a key, recording remains available while live and post-call cloud processing wait for credentials.
 
@@ -28,7 +71,10 @@ The reusable context library, including extracted attachment text and the curren
 
 For UI development, open `Package.swift` in Xcode. Add an OpenAI Platform API key in the app's Settings window. Real capture should be tested from the app bundle so macOS can read its privacy usage descriptions.
 
-## Build an app bundle
+## Build from source (macOS)
+
+Maintainers: follow the [release runbook](docs/RELEASING.md) to create the
+macOS artifacts and attach the tag-matched Windows package.
 
 ```bash
 ./Scripts/build-app.sh

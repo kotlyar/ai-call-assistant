@@ -17,19 +17,90 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}-${{ inputs.release_tag || 'build' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
+    name: Build and test
+    if: github.event_name != 'workflow_dispatch' || inputs.release_tag == ''
     runs-on: windows-latest
     timeout-minutes: 30
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore "windows/Callya.slnx"
+
+      - name: Test
+        run: dotnet test "windows/Callya.slnx" --configuration Release --no-restore --collect:"XPlat Code Coverage"
+
+      - name: Publish portable x64 package
+        shell: pwsh
+        run: ./windows/scripts/publish-windows.ps1 -Runtime win-x64 -SkipTests
+
+      - name: Ensure no obvious secret is packaged
+        shell: pwsh
+        run: |
+          $matches = Get-ChildItem "windows/artifacts/publish/win-x64" -File -Recurse |
+            Select-String -Pattern "sk-proj-", "sk-svcacct-", "OPENAI_API_KEY=" -SimpleMatch
+          if ($matches) { throw "Possible API credential found in publish output." }
+
+      - name: Upload Windows package
+        # Storage quota is account-wide and independent of whether this commit
+        # restored, tested, published, and scanned successfully.
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Callya-Windows-win-x64
+          path: |
+            windows/artifacts/package/Callya-Windows-win-x64.zip
+            windows/artifacts/package/Callya-Windows-win-x64.zip.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish tagged build
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout the requested tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the tag and checked-out commit
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+            throw "release_tag must look like v1.2.3"
+          }
+          $tagRef = "refs/tags/$env:RELEASE_TAG"
+          $tagCommit = git rev-parse "$tagRef^{commit}"
+          $headCommit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $tagCommit -ne $headCommit) {
+            throw "Checked-out commit does not match release tag $env:RELEASE_TAG"
+          }
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: "10.0.x"
 
@@ -51,24 +122,12 @@ jobs:
           if ($matches) { throw "Possible API credential found in publish output." }
 
       - name: Upload Windows package to GitHub Release
-        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          gh release upload "${{ inputs.release_tag }}" `
+          gh release upload "$env:RELEASE_TAG" `
             "windows/artifacts/package/Callya-Windows-win-x64.zip" `
             "windows/artifacts/package/Callya-Windows-win-x64.zip.sha256" `
             --clobber
-
-      - name: Upload Windows package
-        # Storage quota is account-wide and independent of whether this commit
-        # restored, tested, published, and scanned successfully.
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: Callya-Windows-win-x64
-          path: |
-            windows/artifacts/package/Callya-Windows-win-x64.zip
-            windows/artifacts/package/Callya-Windows-win-x64.zip.sha256
-          if-no-files-found: error
