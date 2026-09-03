@@ -392,11 +392,11 @@ export default function Home() {
                 Ориентир
               </span>
               <span className="text-xs text-white/34">
-                цены на 2 сентября 2026
+                цены OpenAI на 2 сентября · курс ЦБ на 3 сентября
               </span>
             </div>
             <div className="mt-8 flex flex-wrap items-end gap-x-4 gap-y-2">
-              <strong className="price-value">$2.8–3.3</strong>
+              <strong className="price-value">≈245–290 ₽</strong>
               <span className="pb-2 text-lg text-white/45">за 1 час</span>
             </div>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/48">
@@ -412,7 +412,7 @@ export default function Home() {
                 rel="noreferrer"
               >
                 <span>Live-распознавание двух дорожек</span>
-                <strong>$2.04</strong>
+                <strong>≈180 ₽</strong>
               </a>
               <a
                 href="https://developers.openai.com/api/docs/models/gpt-transcribe"
@@ -420,7 +420,7 @@ export default function Home() {
                 rel="noreferrer"
               >
                 <span>Постобработка двух дорожек</span>
-                <strong>$0.54</strong>
+                <strong>≈47 ₽</strong>
               </a>
               <a
                 href="https://developers.openai.com/api/docs/models/gpt-5.6-terra"
@@ -428,13 +428,13 @@ export default function Home() {
                 rel="noreferrer"
               >
                 <span>Подсказки и итоговый разбор</span>
-                <strong>≈ $0.2–0.7</strong>
+                <strong>≈17–61 ₽</strong>
               </a>
             </div>
             <p className="mt-5 text-xs leading-5 text-white/30">
-              Расчёт: $0.017/мин × 60 × 2 + $0.0045/мин × 60 × 2; ответы GPT‑5.6
-              Terra оплачиваются по токенам. Для полного часового цикла разумно
-              установить лимит не ниже $3.50.
+              Расчёт в рублях — по курсу ЦБ 87 ₽/$; OpenAI списывает API в
+              долларах, поэтому итог в рублях зависит от курса банка. Для полного
+              часового цикла разумно установить лимит не ниже ≈305 ₽.
             </p>
           </article>
         </div>
