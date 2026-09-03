@@ -389,20 +389,20 @@ export default function Home() {
             <div className="flex items-center justify-between gap-4">
               <span className="price-label">
                 <CircleDollarSign />
-                Ориентир
+                Ориентир · GPT‑5.6 Luna
               </span>
               <span className="text-xs text-white/34">
                 цены OpenAI на 2 сентября · курс ЦБ на 3 сентября
               </span>
             </div>
             <div className="mt-8 flex flex-wrap items-end gap-x-4 gap-y-2">
-              <strong className="price-value">≈245–290 ₽</strong>
+              <strong className="price-value">≈226–231 ₽</strong>
               <span className="pb-2 text-lg text-white/45">за 1 час</span>
             </div>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/48">
               Типичный звонок: две полные дорожки, постобработка, 12–20 вопросов
-              и умеренный объём контекста. Фактическая сумма зависит от числа
-              вопросов, длины диалога и материалов.
+              на GPT‑5.6 Luna и умеренный объём контекста. Фактическая сумма
+              зависит от числа вопросов, длины диалога и материалов.
             </p>
 
             <div className="price-breakdown mt-8">
@@ -412,7 +412,7 @@ export default function Home() {
                 rel="noreferrer"
               >
                 <span>Live-распознавание двух дорожек</span>
-                <strong>≈180 ₽</strong>
+                <strong>≈177 ₽</strong>
               </a>
               <a
                 href="https://developers.openai.com/api/docs/models/gpt-transcribe"
@@ -423,18 +423,18 @@ export default function Home() {
                 <strong>≈47 ₽</strong>
               </a>
               <a
-                href="https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+                href="https://developers.openai.com/api/docs/models/gpt-5.6-luna"
                 target="_blank"
                 rel="noreferrer"
               >
-                <span>Подсказки и итоговый разбор</span>
-                <strong>≈17–61 ₽</strong>
+                <span>Подсказки и итоговый разбор · Luna</span>
+                <strong>≈2–6 ₽</strong>
               </a>
             </div>
             <p className="mt-5 text-xs leading-5 text-white/30">
               Расчёт в рублях — по курсу ЦБ 87 ₽/$; OpenAI списывает API в
               долларах, поэтому итог в рублях зависит от курса банка. Для полного
-              часового цикла разумно установить лимит не ниже ≈305 ₽.
+              часового цикла на Luna разумно установить лимит не ниже ≈250 ₽.
             </p>
           </article>
         </div>
