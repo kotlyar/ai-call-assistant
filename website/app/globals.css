@@ -152,7 +152,7 @@
 
   .product-stage {
     position: relative;
-    aspect-ratio: 1939 / 1308;
+    aspect-ratio: 3 / 2;
     overflow: hidden;
     border: 1px solid rgb(255 255 255 / 11%);
     border-radius: 1.5rem;
@@ -172,10 +172,9 @@
 
   .product-shot {
     display: block;
-    width: 103.1%;
+    width: 100%;
     max-width: none;
-    margin-top: -4.2%;
-    margin-left: -1.55%;
+    margin: 0;
   }
 
   .nav-link {

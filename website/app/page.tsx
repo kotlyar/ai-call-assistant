@@ -261,9 +261,10 @@ export default function Home() {
             <Image
               src="/product/live-assistant.jpg"
               alt="Callya распознаёт вопрос собеседника и предлагает ответ в реальном времени"
-              width={1999}
-              height={1392}
+              width={2400}
+              height={1600}
               priority
+              unoptimized
               className="product-shot"
             />
           </div>
