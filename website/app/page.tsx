@@ -129,6 +129,7 @@ export default function Home() {
               alt=""
               width={36}
               height={36}
+              unoptimized
               className="size-9 rounded-[10px] ring-1 ring-white/12"
             />
             <span className="text-[17px] font-semibold tracking-[-0.02em]">
@@ -664,6 +665,7 @@ export default function Home() {
               alt=""
               width={32}
               height={32}
+              unoptimized
               className="size-8 rounded-[9px]"
             />
             <span>© 2026 Callya · MIT License</span>
