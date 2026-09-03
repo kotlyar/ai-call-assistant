@@ -319,8 +319,9 @@ export default function Home() {
             <Image
               src="/product/call-setup.png"
               alt="Актуальный экран нового звонка в Callya: микрофон, системный звук, live-анализ и контексты"
-              width={864}
-              height={768}
+              width={1800}
+              height={1600}
+              unoptimized
               className="block h-auto w-full"
             />
           </div>
