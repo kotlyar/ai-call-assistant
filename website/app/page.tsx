@@ -318,10 +318,10 @@ export default function Home() {
           <div className="setup-stage mt-18">
             <Image
               src="/product/call-setup.png"
-              alt="Подготовка звонка в Callya: выбранные контексты и проверка источников звука"
-              width={1080}
-              height={741}
-              className="w-full"
+              alt="Актуальный экран нового звонка в Callya: микрофон, системный звук, live-анализ и контексты"
+              width={864}
+              height={768}
+              className="block h-auto w-full"
             />
           </div>
 
